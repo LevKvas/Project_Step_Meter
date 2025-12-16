@@ -11,6 +11,7 @@ import android.util.Log
 import androidx.core.app.NotificationCompat
 import com.example.step_meter.MainActivity
 import com.example.step_meter.R
+import java.util.*
 
 class StepTrackingService : Service(), SensorEventListener {
 
@@ -19,13 +20,18 @@ class StepTrackingService : Service(), SensorEventListener {
         private const val PREFS_NAME = "step_prefs"
         private const val KEY_LAST_STEP_COUNT = "last_step_count"
         private const val KEY_SAVED_TOTAL = "saved_total"
-        private const val KEY_IS_RESET = "is_reset_requested"
     }
 
     private lateinit var sensorManager: SensorManager
     private lateinit var sharedPrefs: SharedPreferences
 
-    // ★ Добавляем BroadcastReceiver для сброса
+    private lateinit var stepDetector: StepDetector
+    private var useStepDetector = false
+
+    private var stepSensor: Sensor? = null
+    private var lastStepCounterValue = 0f
+    private var appTotalSteps = 0
+
     private val resetReceiver = object : BroadcastReceiver() {
         override fun onReceive(context: Context?, intent: Intent?) {
             if (intent?.action == "RESET_STEPS_ACTION") {
@@ -34,11 +40,6 @@ class StepTrackingService : Service(), SensorEventListener {
             }
         }
     }
-
-    private var stepSensor: Sensor? = null
-    private var lastStepCounterValue = 0f
-    private var appTotalSteps = 0
-    private var isResetRequested = false
 
     override fun onCreate() {
         super.onCreate()
@@ -49,11 +50,10 @@ class StepTrackingService : Service(), SensorEventListener {
         // Загружаем сохраненные значения
         appTotalSteps = sharedPrefs.getInt(KEY_SAVED_TOTAL, 0)
         lastStepCounterValue = sharedPrefs.getFloat(KEY_LAST_STEP_COUNT, 0f)
-        isResetRequested = sharedPrefs.getBoolean(KEY_IS_RESET, false)
 
-        Log.e(TAG, "📊 Загружено: steps=$appTotalSteps, last=$lastStepCounterValue, reset=$isResetRequested")
+        Log.e(TAG, "📊 Загружено: steps=$appTotalSteps, last=$lastStepCounterValue")
 
-        // ★ Регистрируем receiver для сброса
+        // Регистрируем receiver для сброса
         val filter = IntentFilter("RESET_STEPS_ACTION")
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
             registerReceiver(resetReceiver, filter, RECEIVER_EXPORTED)
@@ -61,71 +61,92 @@ class StepTrackingService : Service(), SensorEventListener {
             registerReceiver(resetReceiver, filter)
         }
 
-        // Отправляем текущее значение
         sendStepsToApp(appTotalSteps)
         showNotification("Запуск отслеживания...")
         initSensors()
-    }
-
-    private fun resetStepCounter() {
-        Log.e(TAG, "🔄 ВЫПОЛНЯЕТСЯ СБРОС ШАГОВ!")
-
-        // 1. Обнуляем счетчик в приложении
-        appTotalSteps = 0
-
-        // 2. Сбрасываем сохраненное значение датчика
-        // Это важно! При следующем получении события датчика будем считать от 0
-        lastStepCounterValue = 0f
-
-        // 3. Сохраняем в SharedPreferences
-        saveTotalSteps(0)
-        saveLastStepValue(0f)
-        saveResetFlag(true)
-
-        // 4. Уведомляем UI
-        sendStepsToApp(0)
-        updateNotification()
-
-        Log.e(TAG, "✅ Счетчик сброшен до 0")
     }
 
     private fun initSensors() {
         try {
             sensorManager = getSystemService(Context.SENSOR_SERVICE) as SensorManager
 
-            // ★ Если был запрос сброса, игнорируем предыдущее значение датчика
-            if (isResetRequested) {
-                Log.e(TAG, "⚠ Был запрос сброса, игнорируем сохраненное значение датчика")
-                lastStepCounterValue = 0f
-                saveResetFlag(false) // сбрасываем флаг
-            }
-
+            // ★★ ПЕРВЫЙ ВЫБОР: STEP_COUNTER (самый точный)
             stepSensor = sensorManager.getDefaultSensor(Sensor.TYPE_STEP_COUNTER)
-                ?: sensorManager.getDefaultSensor(Sensor.TYPE_STEP_DETECTOR)
 
-            if (stepSensor == null) {
-                Log.e(TAG, "⚠ Нет датчиков шагов!")
-                showNotification("Нет датчиков шагов")
-                return
+            if (stepSensor != null) {
+                Log.e(TAG, "✅ Найден STEP_COUNTER: ${stepSensor!!.name}")
+                useStepDetector = false
+
+                val success = sensorManager.registerListener(
+                    this,
+                    stepSensor,
+                    SensorManager.SENSOR_DELAY_NORMAL
+                )
+
+                if (success) {
+                    Log.e(TAG, "✅ STEP_COUNTER зарегистрирован")
+                    showNotification("Счетчик шагов активен")
+                    return
+                }
             }
 
-            Log.e(TAG, "✅ Датчик: ${stepSensor!!.name} (тип: ${stepSensor!!.type})")
+            // ★★ ВТОРОЙ ВЫБОР: STEP_DETECTOR (встроенный Android)
+            stepSensor = sensorManager.getDefaultSensor(Sensor.TYPE_STEP_DETECTOR)
 
-            val success = sensorManager.registerListener(
-                this,
-                stepSensor,
-                SensorManager.SENSOR_DELAY_NORMAL
-            )
+            if (stepSensor != null) {
+                Log.e(TAG, "✅ Найден STEP_DETECTOR: ${stepSensor!!.name}")
+                useStepDetector = false
 
-            if (success) {
-                Log.e(TAG, "✅ Слушатель зарегистрирован")
-                showNotification("Шагов: $appTotalSteps")
-            } else {
-                Log.e(TAG, "❌ Не удалось зарегистрировать слушатель")
+                val success = sensorManager.registerListener(
+                    this,
+                    stepSensor,
+                    SensorManager.SENSOR_DELAY_NORMAL
+                )
+
+                if (success) {
+                    Log.e(TAG, "✅ STEP_DETECTOR зарегистрирован")
+                    showNotification("Детектор шагов активен")
+                    return
+                }
             }
+
+            // ★★ ТРЕТИЙ ВЫБОР: StepDetector (наш, через акселерометр)
+            Log.e(TAG, "⚠ Нет встроенных датчиков, использую StepDetector")
+            useStepDetector = true
+            initCustomStepDetector()
 
         } catch (e: Exception) {
             Log.e(TAG, "❌ Ошибка инициализации: ${e.message}")
+            showNotification("Ошибка датчиков")
+        }
+    }
+
+    private fun initCustomStepDetector() {
+        stepDetector = StepDetector().apply {
+            setStepListener(object : StepDetector.StepListener {
+                override fun onStep(count: Int) {
+                    // Для StepDetector count - это общее количество шагов
+                    handleStepDetectorEvent(count)
+                }
+            })
+        }
+
+        val accelerometer = sensorManager.getDefaultSensor(Sensor.TYPE_ACCELEROMETER)
+
+        if (accelerometer == null) {
+            Log.e(TAG, "❌ Нет даже акселерометра!")
+            return
+        }
+
+        val success = sensorManager.registerListener(
+            stepDetector,
+            accelerometer,
+            SensorManager.SENSOR_DELAY_NORMAL
+        )
+
+        if (success) {
+            Log.e(TAG, "✅ StepDetector зарегистрирован")
+            showNotification("Алгоритм подсчета активен")
         }
     }
 
@@ -145,17 +166,16 @@ class StepTrackingService : Service(), SensorEventListener {
     }
 
     private fun handleStepCounter(currentSensorValue: Float) {
-        Log.e(TAG, "🔄 Датчик: $currentSensorValue, Предыдущее: $lastStepCounterValue")
+        Log.e(TAG, "📈 STEP_COUNTER: $currentSensorValue")
 
-        // ★ ВАЖНОЕ ИЗМЕНЕНИЕ: Правильная логика обработки
         if (lastStepCounterValue == 0f) {
-            // Первое получение значения после сброса
+            // Первое получение
             lastStepCounterValue = currentSensorValue
             saveLastStepValue(currentSensorValue)
 
-            // Начинаем с 0 в любом случае
+            // Начинаем с 0
             appTotalSteps = 0
-            Log.e(TAG, "📌 Первое значение датчика после сброса: $currentSensorValue")
+            Log.e(TAG, "📌 Первое значение: $currentSensorValue")
 
         } else {
             // Вычисляем разницу
@@ -174,9 +194,6 @@ class StepTrackingService : Service(), SensorEventListener {
                 updateNotification()
             }
         }
-
-        // Всегда сохраняем текущее состояние
-        saveTotalSteps(appTotalSteps)
     }
 
     private fun handleStepDetector() {
@@ -189,26 +206,62 @@ class StepTrackingService : Service(), SensorEventListener {
         updateNotification()
     }
 
+    private fun handleStepDetectorEvent(count: Int) {
+        // Для нашего StepDetector count - это общее количество
+        // Нужно вычислить разницу
+        val newSteps = count
+        val difference = newSteps - appTotalSteps
+
+        if (difference > 0) {
+            appTotalSteps = newSteps
+            saveTotalSteps(appTotalSteps)
+
+            Log.e(TAG, "📱 StepDetector: +$difference шагов, всего: $appTotalSteps")
+
+            sendStepsToApp(appTotalSteps)
+            updateNotification()
+        }
+    }
+
+    private fun resetStepCounter() {
+        Log.e(TAG, "🔄 ВЫПОЛНЯЕТСЯ СБРОС ШАГОВ!")
+
+        appTotalSteps = 0
+
+        if (useStepDetector) {
+            stepDetector.resetSteps()
+        } else {
+            lastStepCounterValue = 0f
+        }
+
+        saveTotalSteps(0)
+        saveLastStepValue(0f)
+
+        sendStepsToApp(0)
+        updateNotification()
+
+        Log.e(TAG, "✅ Счетчик сброшен до 0")
+    }
+
     private fun saveLastStepValue(value: Float) {
-        sharedPrefs.edit().putFloat(KEY_LAST_STEP_COUNT, value).apply()
+        if (!useStepDetector) {  // Только для STEP_COUNTER
+            sharedPrefs.edit().putFloat(KEY_LAST_STEP_COUNT, value).apply()
+        }
     }
 
     private fun saveTotalSteps(steps: Int) {
         sharedPrefs.edit().putInt(KEY_SAVED_TOTAL, steps).apply()
     }
 
-    private fun saveResetFlag(isReset: Boolean) {
-        sharedPrefs.edit().putBoolean(KEY_IS_RESET, isReset).apply()
-    }
-
     private fun sendStepsToApp(steps: Int) {
         try {
             Log.e(TAG, "📡 Отправка в приложение: $steps шагов")
 
-            // Основной способ
+            // ★★ ВАЖНО: Синхронизация уведомления и приложения
+            updateNotification("Шагов: $steps")
+
             val broadcastIntent = Intent("STEP_UPDATE_ACTION").apply {
                 putExtra("steps", steps)
-                // ★ Добавляем пакет для безопасности
                 setPackage(applicationContext.packageName)
             }
             sendBroadcast(broadcastIntent)
@@ -246,12 +299,18 @@ class StepTrackingService : Service(), SensorEventListener {
                 PendingIntent.FLAG_IMMUTABLE or PendingIntent.FLAG_UPDATE_CURRENT
             )
 
-            val notificationText = customText ?: "Шагов: $appTotalSteps"
+            val source = when {
+                useStepDetector -> "(алгоритм)"
+                stepSensor?.type == Sensor.TYPE_STEP_COUNTER -> "(счетчик)"
+                else -> "(детектор)"
+            }
+
+            val notificationText = customText ?: "Шагов: $appTotalSteps $source"
 
             val notification = NotificationCompat.Builder(this, "step_channel")
                 .setContentTitle("Шагомер")
                 .setContentText(notificationText)
-                .setSmallIcon(R.drawable.ic_walk) // Убедитесь что иконка существует
+                .setSmallIcon(R.drawable.ic_walk)
                 .setContentIntent(pendingIntent)
                 .setOngoing(true)
                 .setOnlyAlertOnce(true)
@@ -272,7 +331,7 @@ class StepTrackingService : Service(), SensorEventListener {
 
     override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {
         Log.e(TAG, "▶ onStartCommand()")
-        sendStepsToApp(appTotalSteps)
+        sendStepsToApp(appTotalSteps)  // ★ Синхронизация при старте
         return START_STICKY
     }
 
@@ -282,6 +341,9 @@ class StepTrackingService : Service(), SensorEventListener {
         Log.e(TAG, "🛑 Сервис остановлен")
         try {
             sensorManager.unregisterListener(this)
+            if (useStepDetector) {
+                sensorManager.unregisterListener(stepDetector)
+            }
             unregisterReceiver(resetReceiver)
         } catch (e: Exception) {
             // Игнорируем

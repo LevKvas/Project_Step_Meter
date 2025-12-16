@@ -176,7 +176,7 @@ class MainActivity : ComponentActivity() {
         }
     }
 
-    override fun onDestroy() {
+    override fun onDestroy() { // when the system completely destroys MainActivity
         super.onDestroy()
         StepScheduler.cancelNotifications(this)
     }
