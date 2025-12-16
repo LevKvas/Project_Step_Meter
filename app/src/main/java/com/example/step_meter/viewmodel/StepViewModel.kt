@@ -11,6 +11,8 @@ import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.launch
 import android.util.Log
 
+// regular execution of actions according to a schedule
+
 class StepViewModel : ViewModel() {
     private val _totalSteps = MutableStateFlow(0)
     val totalSteps: StateFlow<Int> = _totalSteps.asStateFlow()
@@ -34,7 +36,6 @@ class StepViewModel : ViewModel() {
         }
     }
 
-    // ★★ ИЗМЕНЕННАЯ ФУНКЦИЯ: теперь она только уведомляет о желании сбросить ★★
     fun resetSteps(context: Context) {
         viewModelScope.launch {
             Log.d("StepViewModel", "🔄 Запрошен сброс шагов")

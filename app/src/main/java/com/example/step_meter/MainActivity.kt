@@ -37,12 +37,10 @@ class MainActivity : ComponentActivity() {
 
     // Разрешения для Android 14+
     private val permissions = mutableListOf<String>().apply {
-        // Основные разрешения для шагомера
-        add(Manifest.permission.ACTIVITY_RECOGNITION)
+        add(Manifest.permission.ACTIVITY_RECOGNITION) // for count steps
 
-        // Для foreground service
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
-            add(Manifest.permission.FOREGROUND_SERVICE)
+            add(Manifest.permission.FOREGROUND_SERVICE) // work in the background
         }
 
         // Для health foreground service (Android 14+)
@@ -50,7 +48,7 @@ class MainActivity : ComponentActivity() {
             add(Manifest.permission.FOREGROUND_SERVICE_HEALTH)
         }
 
-        // Для уведомлений (Android 13+)
+        // for notifications (Android 13+)
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
             add(Manifest.permission.POST_NOTIFICATIONS)
         }
@@ -89,6 +87,7 @@ class MainActivity : ComponentActivity() {
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
 
+        // create all interface
         setContent {
             Step_meterTheme {
                 Surface(
@@ -104,6 +103,7 @@ class MainActivity : ComponentActivity() {
         }
     }
 
+    // user start use my app
     override fun onResume() {
         super.onResume()
 
@@ -119,7 +119,7 @@ class MainActivity : ComponentActivity() {
             if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
                 registerReceiver(stepUpdateReceiver, filter, RECEIVER_EXPORTED)
             } else {
-                registerReceiver(stepUpdateReceiver, filter)
+                registerReceiver(stepUpdateReceiver, filter) // start to get msg from service
             }
             Log.e("MAIN_ACTIVITY", "✅ Receiver зарегистрирован")
         } catch (e: Exception) {
@@ -130,7 +130,7 @@ class MainActivity : ComponentActivity() {
         startServices()
     }
 
-    override fun onPause() {
+    override fun onPause() { // when something starts to block
         super.onPause()
 
         // Отписываемся от BroadcastReceiver
@@ -154,7 +154,7 @@ class MainActivity : ComponentActivity() {
         }
     }
 
-    private fun startServices() {
+    private fun startServices() { // to run background service
         Log.e("MAIN_ACTIVITY", "🚀 Запуск сервиса...")
 
         try {
@@ -182,12 +182,13 @@ class MainActivity : ComponentActivity() {
     }
 }
 
-// DashboardScreen остается без изменений
+// to show results
 @Composable
 fun DashboardScreen(
     onRequestPermissions: () -> Unit = {},
-    onStartServices: () -> Unit = {}
+    onStartServices: () -> Unit = {} // function to start service
 ) {
+    // get data
     val context = LocalContext.current
     val viewModel: StepViewModel = viewModel<StepViewModel>()
     val hourlySteps by viewModel.hourlySteps.collectAsState(
@@ -273,7 +274,7 @@ fun DashboardScreen(
             sensorStatus = "❌ Ошибка проверки: ${e.message}"
         }
     }
-
+    // create interface
     LazyColumn(
         modifier = Modifier.fillMaxSize(),
         verticalArrangement = Arrangement.spacedBy(16.dp),

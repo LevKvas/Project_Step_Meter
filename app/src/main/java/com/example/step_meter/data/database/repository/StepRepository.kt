@@ -7,6 +7,8 @@ import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.map
 import java.util.*
 
+// brain of my app
+
 class StepRepository private constructor(context: Context) {
 
     private val stepDao = StepDatabase.getDatabase(context).stepDao()

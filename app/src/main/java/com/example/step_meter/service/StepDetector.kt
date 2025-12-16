@@ -6,6 +6,8 @@ import android.hardware.SensorEventListener
 import android.hardware.SensorManager
 import kotlin.math.sqrt
 
+// physics of my application
+
 class StepDetector : SensorEventListener {
 
     private var stepCount = 0
@@ -14,7 +16,7 @@ class StepDetector : SensorEventListener {
     private var lastAcceleration = 0f
 
     // Порог для обнаружения шага
-    private val stepThreshold = 10.0f
+    private val stepThreshold = 2.0f
     private var acceleration = 0f
 
     private var stepListener: StepListener? = null
@@ -23,7 +25,7 @@ class StepDetector : SensorEventListener {
         stepListener = listener
     }
 
-    override fun onSensorChanged(event: SensorEvent) {
+    override fun onSensorChanged(event: SensorEvent) { // when data on sensor changed
         if (event.sensor.type == Sensor.TYPE_ACCELEROMETER) {
             val x = event.values[0]
             val y = event.values[1]

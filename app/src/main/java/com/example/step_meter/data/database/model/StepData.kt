@@ -4,6 +4,7 @@ import androidx.room.Entity
 import androidx.room.PrimaryKey
 import java.util.Date
 
+// record of steps in the database
 @Entity(tableName = "step_data")
 data class StepData(
     @PrimaryKey(autoGenerate = true)

@@ -6,6 +6,8 @@ import android.content.Intent
 import com.example.step_meter.service.StepTrackingService
 import com.example.step_meter.utils.StepScheduler
 
+// Recover important data after reboot
+
 class BootReceiver : BroadcastReceiver() {
 
     override fun onReceive(context: Context, intent: Intent) {
