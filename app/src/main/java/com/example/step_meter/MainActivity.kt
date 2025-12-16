@@ -1,10 +1,14 @@
 package com.example.step_meter
 
 import android.Manifest
+import android.content.BroadcastReceiver
+import android.content.Context
 import android.content.Intent
+import android.content.IntentFilter
 import android.content.pm.PackageManager
 import android.os.Build
 import android.os.Bundle
+import android.util.Log
 import androidx.activity.ComponentActivity
 import androidx.activity.compose.setContent
 import androidx.activity.result.contract.ActivityResultContracts
@@ -19,9 +23,15 @@ import androidx.compose.ui.unit.dp
 import androidx.core.content.ContextCompat
 import androidx.lifecycle.viewmodel.compose.viewModel
 import com.example.step_meter.service.StepTrackingService
+import com.example.step_meter.ui.theme.Step_meterTheme
 import com.example.step_meter.utils.StepScheduler
 import com.example.step_meter.viewmodel.StepViewModel
-import com.example.step_meter.ui.theme.Step_meterTheme
+
+import androidx.activity.viewModels
+
+import android.hardware.Sensor
+import android.hardware.SensorManager
+
 
 class MainActivity : ComponentActivity() {
 
@@ -53,10 +63,28 @@ class MainActivity : ComponentActivity() {
         if (allGranted) {
             startServices()
         } else {
-            // Показать сообщение о необходимости разрешений
-            // В реальном приложении нужно обработать этот случай
+            Log.e("MAIN_ACTIVITY", "⚠ Не все разрешения получены")
         }
     }
+
+    private val stepUpdateReceiver = object : BroadcastReceiver() {
+        override fun onReceive(context: Context?, intent: Intent?) {
+            when (intent?.action) {
+                "STEP_UPDATE_ACTION" -> {
+                    val steps = intent.getIntExtra("steps", 0)
+                    Log.e("MAIN_ACTIVITY", "📡 Получены шаги: $steps")
+                    viewModel?.updateSteps(steps)
+                    viewModel?.setServiceRunning(true)
+                }
+                "STEP_COUNT_UPDATE" -> {
+                    val steps = intent.getIntExtra("step_count", 0)
+                    Log.e("MAIN_ACTIVITY", "📡 Получены шаги (альтернативный): $steps")
+                    viewModel?.updateSteps(steps)
+                }
+            }
+        }
+    }
+    private val viewModel: StepViewModel by viewModels()
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
@@ -76,6 +104,44 @@ class MainActivity : ComponentActivity() {
         }
     }
 
+    override fun onResume() {
+        super.onResume()
+
+        // ★ ПРОВЕРЯЕМ разрешения перед регистрацией
+        checkAndRequestPermissions()
+
+        val filter = IntentFilter().apply {
+            addAction("STEP_UPDATE_ACTION")
+            addAction("STEP_COUNT_UPDATE")
+        }
+
+        try {
+            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
+                registerReceiver(stepUpdateReceiver, filter, RECEIVER_EXPORTED)
+            } else {
+                registerReceiver(stepUpdateReceiver, filter)
+            }
+            Log.e("MAIN_ACTIVITY", "✅ Receiver зарегистрирован")
+        } catch (e: Exception) {
+            Log.e("MAIN_ACTIVITY", "❌ Ошибка регистрации receiver: ${e.message}")
+        }
+
+        // ★ ПРИ ВОЗОБНОВЛЕНИИ ЗАПУСКАЕМ СЕРВИС
+        startServices()
+    }
+
+    override fun onPause() {
+        super.onPause()
+
+        // Отписываемся от BroadcastReceiver
+        try {
+            unregisterReceiver(stepUpdateReceiver)
+            Log.e("MAIN_ACTIVITY", "✅ BroadcastReceiver отписан")
+        } catch (e: Exception) {
+            // Игнорируем если не зарегистрирован
+        }
+    }
+
     private fun checkAndRequestPermissions() {
         val missingPermissions = permissions.filter {
             ContextCompat.checkSelfPermission(this, it) != PackageManager.PERMISSION_GRANTED
@@ -89,23 +155,25 @@ class MainActivity : ComponentActivity() {
     }
 
     private fun startServices() {
-        // Запускаем сервис отслеживания шагов
-        val serviceIntent = Intent(this, StepTrackingService::class.java)
+        Log.e("MAIN_ACTIVITY", "🚀 Запуск сервиса...")
 
-        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
-            startForegroundService(serviceIntent)
-        } else {
-            startService(serviceIntent)
+        try {
+            val serviceIntent = Intent(this, StepTrackingService::class.java)
+
+            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
+                startForegroundService(serviceIntent)
+            } else {
+                startService(serviceIntent)
+            }
+
+            Log.e("MAIN_ACTIVITY", "✅ Сервис запущен")
+
+            // Запускаем планировщик уведомлений
+            StepScheduler.scheduleHourlyNotifications(this)
+
+        } catch (e: Exception) {
+            Log.e("MAIN_ACTIVITY", "❌ Ошибка запуска сервиса: ${e.message}")
         }
-
-        // Запускаем планировщик уведомлений
-        StepScheduler.scheduleHourlyNotifications(this)
-    }
-
-    override fun onResume() {
-        super.onResume()
-        // При возвращении в приложение проверяем разрешения
-        checkAndRequestPermissions()
     }
 
     override fun onDestroy() {
@@ -114,23 +182,26 @@ class MainActivity : ComponentActivity() {
     }
 }
 
+// DashboardScreen остается без изменений
 @Composable
 fun DashboardScreen(
-    viewModel: StepViewModel = viewModel<StepViewModel>(),
     onRequestPermissions: () -> Unit = {},
     onStartServices: () -> Unit = {}
 ) {
     val context = LocalContext.current
+    val viewModel: StepViewModel = viewModel<StepViewModel>()
     val hourlySteps by viewModel.hourlySteps.collectAsState(
         initial = emptyList<Pair<Int, Int>>()
     )
     val totalSteps by viewModel.totalSteps.collectAsState(initial = 0)
     val isServiceRunning by viewModel.isServiceRunning.collectAsState(initial = false)
 
+    // Локальное состояние для статуса датчиков
+    var sensorStatus by remember { mutableStateOf("") }
+
     var showPermissionDialog by remember { mutableStateOf(false) }
 
     LaunchedEffect(Unit) {
-        // Проверяем разрешения при первом запуске
         val hasActivityRecognition = ContextCompat.checkSelfPermission(
             context,
             Manifest.permission.ACTIVITY_RECOGNITION
@@ -149,11 +220,13 @@ fun DashboardScreen(
             onDismissRequest = { showPermissionDialog = false },
             title = { Text("Необходимы разрешения") },
             text = {
-                Text("Для работы шагомера необходимы следующие разрешения:\n\n" +
-                        "• Отслеживание физической активности\n" +
-                        "• Работа в фоновом режиме\n" +
-                        "• Показ уведомлений\n\n" +
-                        "Приложение будет запрашивать эти разрешения.")
+                Text(
+                    "Для работы шагомера необходимы следующие разрешения:\n\n" +
+                            "• Отслеживание физической активности\n" +
+                            "• Работа в фоновом режиме\n" +
+                            "• Показ уведомлений\n\n" +
+                            "Приложение будет запрашивать эти разрешения."
+                )
             },
             confirmButton = {
                 Button(
@@ -173,6 +246,32 @@ fun DashboardScreen(
                 }
             }
         )
+    }
+
+    // Функция для проверки датчиков
+    fun checkSensors() {
+        try {
+            val sensorManager = context.getSystemService(Context.SENSOR_SERVICE) as SensorManager
+            val stepCounter = sensorManager.getDefaultSensor(Sensor.TYPE_STEP_COUNTER)
+            val stepDetector = sensorManager.getDefaultSensor(Sensor.TYPE_STEP_DETECTOR)
+
+            val sensorInfo = StringBuilder()
+            sensorInfo.append("ПРОВЕРКА ДАТЧИКОВ:\n")
+            sensorInfo.append("• STEP_COUNTER: ${if (stepCounter != null) "✅ Есть (${stepCounter.name})" else "❌ Нет"}\n")
+            sensorInfo.append("• STEP_DETECTOR: ${if (stepDetector != null) "✅ Есть (${stepDetector.name})" else "❌ Нет"}\n")
+            sensorInfo.append("\nКак работают датчики:\n")
+            sensorInfo.append("- STEP_COUNTER: Считает ВСЕ шаги с последней перезагрузки\n")
+            sensorInfo.append("- STEP_DETECTOR: Детектирует КАЖДЫЙ шаг отдельно\n")
+
+            if (stepCounter == null && stepDetector == null) {
+                sensorInfo.append("\n⚠ ВНИМАНИЕ: На устройстве НЕТ датчиков шагов!\n")
+                sensorInfo.append("Приложение не сможет считать шаги.")
+            }
+
+            sensorStatus = sensorInfo.toString()
+        } catch (e: Exception) {
+            sensorStatus = "❌ Ошибка проверки: ${e.message}"
+        }
     }
 
     LazyColumn(
@@ -280,14 +379,20 @@ fun DashboardScreen(
         }
 
         item {
-            Button(
-                onClick = {
-                    // Сброс шагов
-                    viewModel.resetSteps()
-                },
-                modifier = Modifier.padding(16.dp)
+            Row(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .padding(horizontal = 16.dp),
+                horizontalArrangement = Arrangement.SpaceEvenly
             ) {
-                Text("Сбросить шаги")
+                Button(
+                    onClick = {
+                        // Сброс шагов
+                        viewModel.resetSteps(context)
+                    }
+                ) {
+                    Text("Сбросить шаги")
+                }
             }
         }
     }
