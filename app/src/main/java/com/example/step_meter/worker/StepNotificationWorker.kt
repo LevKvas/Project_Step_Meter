@@ -22,10 +22,9 @@ class StepNotificationWorker(
                 Context.MODE_PRIVATE
             )
 
-            // Берем шаги из SharedPreferences, как это делает сервис
+            // Берем шаги из SharedPreferences
             val totalSteps = sharedPrefs.getInt("saved_total", 0) // KEY_SAVED_TOTAL
 
-            // Остальной код без изменений
             val motivationMessage = when {
                 totalSteps < 1000 -> "Хорошее начало! Продолжайте в том же духе!"
                 totalSteps < 5000 -> "Отлично! Вы на правильном пути!"

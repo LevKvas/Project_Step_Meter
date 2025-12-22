@@ -273,36 +273,37 @@ class StepTrackingService : Service(), SensorEventListener {
 
             Log.d(TAG, "🕐 Текущий час: $currentHour, сохраненный: $lastSavedHour")
 
-            if (currentHour != lastSavedHour) {
-                if (lastSavedHour != -1) {
-                    val stepsForLastHour = appTotalSteps - lastStepCountForHour
-                    Log.d(TAG, "📊 Шагов за час $lastSavedHour: $stepsForLastHour")
+            // Всегда вычисляем шаги за текущий час
+            val stepsForCurrentHour = appTotalSteps - lastStepCountForHour
+            Log.d(TAG, "📊 Шагов за текущий час $currentHour: $stepsForCurrentHour")
 
-                    if (stepsForLastHour > 0) {
-                        CoroutineScope(Dispatchers.IO).launch {
-                            try {
-                                val saveCalendar = Calendar.getInstance().apply {
-                                    set(Calendar.HOUR_OF_DAY, lastSavedHour)
-                                    set(Calendar.MINUTE, 0)
-                                    set(Calendar.SECOND, 0)
-                                    set(Calendar.MILLISECOND, 0)
-                                }
-
-                                repository.saveStep(saveCalendar.time, lastSavedHour, stepsForLastHour)
-                                Log.d(TAG, "💾 Сохранено: $lastSavedHour:00 - $stepsForLastHour шагов")
-
-                            } catch (e: Exception) {
-                                Log.e(TAG, "❌ Ошибка сохранения в БД: ${e.message}")
-                            }
+            if (stepsForCurrentHour > 0 || currentHour != lastSavedHour) {
+                CoroutineScope(Dispatchers.IO).launch {
+                    try {
+                        val saveCalendar = Calendar.getInstance().apply {
+                            set(Calendar.HOUR_OF_DAY, currentHour)
+                            set(Calendar.MINUTE, 0)
+                            set(Calendar.SECOND, 0)
+                            set(Calendar.MILLISECOND, 0)
                         }
+
+                        // ✅ ВАЖНО: сохраняем НАКОПЛЕННЫЕ шаги за час, а не разницу
+                        repository.saveStep(saveCalendar.time, currentHour, stepsForCurrentHour)
+                        Log.d(TAG, "💾 Сохранено: $currentHour:00 - $stepsForCurrentHour шагов")
+
+                    } catch (e: Exception) {
+                        Log.e(TAG, "❌ Ошибка сохранения в БД: ${e.message}")
                     }
                 }
+            }
 
+            // Обновляем savedHour только если час действительно сменился
+            if (currentHour != lastSavedHour) {
                 lastSavedHour = currentHour
                 lastStepCountForHour = appTotalSteps
-
                 Log.d(TAG, "🔄 Начинаем новый час $currentHour, базовое значение: $lastStepCountForHour")
             }
+
         } catch (e: Exception) {
             Log.e(TAG, "❌ Ошибка сохранения почасовых данных: ${e.message}")
         }
