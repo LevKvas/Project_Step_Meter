@@ -38,6 +38,7 @@ import androidx.compose.foundation.background
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.ui.unit.times
 import androidx.compose.foundation.border
+import kotlinx.coroutines.delay
 
 class MainActivity : ComponentActivity() {
 
@@ -350,12 +351,31 @@ fun DashboardScreen(
 @Composable
 fun SimpleScrollableChart(hourlySteps: List<Pair<Int, Int>>) {
     val scrollState = rememberScrollState()
-    val currentHour = Calendar.getInstance().get(Calendar.HOUR_OF_DAY)
+    var currentHour by remember { mutableIntStateOf(Calendar.getInstance().get(Calendar.HOUR_OF_DAY)) }
 
-    val recentHours = (0..6).map { i ->
-        val hour = (currentHour - 6 + i + 24) % 24
-        val steps = hourlySteps.find { it.first == hour }?.second ?: 0
-        Pair(hour, steps)
+    // ★★ ВЫЧИСЛЯЕМ recentHours на основе hourlySteps и текущего часа
+    val recentHours = remember(hourlySteps, currentHour) {
+        // Получаем последние 7 часов относительно текущего часа
+        val hoursToShow = (0..6).map { offset ->
+            val hour = (currentHour - offset + 24) % 24 // вычитаем offset для последних часов
+            hour
+        }.reversed() // разворачиваем, чтобы шло от старых к новым
+
+        hoursToShow.map { hour ->
+            hour to (hourlySteps.find { it.first == hour }?.second ?: 0)
+        }
+    }
+
+    LaunchedEffect(Unit) {
+        while (true) {
+            delay(60 * 1000L) // every minute
+            val newHour = Calendar.getInstance().get(Calendar.HOUR_OF_DAY)
+
+            if (newHour != currentHour) {
+                currentHour = newHour
+                Log.d("GRAPH_UPDATE", "🔄 Час сменился: $currentHour")
+            }
+        }
     }
 
     Box(
@@ -384,7 +404,7 @@ fun SimpleScrollableChart(hourlySteps: List<Pair<Int, Int>>) {
             ) {
                 recentHours.forEach { (hour, steps) ->
                     val maxSteps = recentHours.maxOfOrNull { it.second } ?: 1
-                    val heightPercentage = steps.toFloat() / maxSteps
+                    val heightPercentage = if (maxSteps > 0) steps.toFloat() / maxSteps else 0f
                     val barHeight = heightPercentage * 180.dp
 
                     Column(
