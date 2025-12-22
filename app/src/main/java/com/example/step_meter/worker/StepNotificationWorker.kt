@@ -17,13 +17,15 @@ class StepNotificationWorker(
 
     override suspend fun doWork(): Result = withContext(Dispatchers.IO) {
         try {
-            val repository = StepRepository.getInstance(applicationContext)
-            val currentDate = Calendar.getInstance().time
+            val sharedPrefs = applicationContext.getSharedPreferences(
+                "step_prefs",  // Должно совпадать с StepTrackingService.PREFS_NAME
+                Context.MODE_PRIVATE
+            )
 
-            // Получаем общее количество шагов за сегодня
-            val totalSteps = repository.getTotalSteps(currentDate).first()
+            // Берем шаги из SharedPreferences, как это делает сервис
+            val totalSteps = sharedPrefs.getInt("saved_total", 0) // KEY_SAVED_TOTAL
 
-            // Создаем мотивационное сообщение
+            // Остальной код без изменений
             val motivationMessage = when {
                 totalSteps < 1000 -> "Хорошее начало! Продолжайте в том же духе!"
                 totalSteps < 5000 -> "Отлично! Вы на правильном пути!"
@@ -31,7 +33,6 @@ class StepNotificationWorker(
                 else -> "Фантастически! Вы превзошли ожидания!"
             }
 
-            // Отправляем уведомление
             NotificationHelper.sendStepNotification(
                 applicationContext,
                 totalSteps,

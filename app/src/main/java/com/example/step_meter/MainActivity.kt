@@ -26,11 +26,17 @@ import com.example.step_meter.service.StepTrackingService
 import com.example.step_meter.ui.theme.Step_meterTheme
 import com.example.step_meter.utils.StepScheduler
 import com.example.step_meter.viewmodel.StepViewModel
-
 import androidx.activity.viewModels
-
-import android.hardware.Sensor
-import android.hardware.SensorManager
+import androidx.compose.foundation.Canvas
+import androidx.compose.ui.geometry.Offset
+import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.unit.sp
+import androidx.compose.foundation.horizontalScroll
+import androidx.compose.foundation.rememberScrollState
+import java.util.*
+import androidx.compose.ui.draw.rotate
+import androidx.compose.foundation.background
+import androidx.compose.ui.unit.times
 
 
 class MainActivity : ComponentActivity() {
@@ -71,13 +77,13 @@ class MainActivity : ComponentActivity() {
                 "STEP_UPDATE_ACTION" -> {
                     val steps = intent.getIntExtra("steps", 0)
                     Log.e("MAIN_ACTIVITY", "📡 Получены шаги: $steps")
-                    viewModel?.updateSteps(steps)
+                    viewModel?.updateSteps(steps, this@MainActivity)
                     viewModel?.setServiceRunning(true)
                 }
                 "STEP_COUNT_UPDATE" -> {
                     val steps = intent.getIntExtra("step_count", 0)
                     Log.e("MAIN_ACTIVITY", "📡 Получены шаги (альтернативный): $steps")
-                    viewModel?.updateSteps(steps)
+                    viewModel?.updateSteps(steps, this@MainActivity)
                 }
             }
         }
@@ -186,95 +192,45 @@ class MainActivity : ComponentActivity() {
 @Composable
 fun DashboardScreen(
     onRequestPermissions: () -> Unit = {},
-    onStartServices: () -> Unit = {} // function to start service
+    onStartServices: () -> Unit = {}
 ) {
-    // get data
     val context = LocalContext.current
     val viewModel: StepViewModel = viewModel<StepViewModel>()
-    val hourlySteps by viewModel.hourlySteps.collectAsState(
-        initial = emptyList<Pair<Int, Int>>()
-    )
+    val hourlySteps by viewModel.hourlySteps.collectAsState(initial = emptyList())
     val totalSteps by viewModel.totalSteps.collectAsState(initial = 0)
     val isServiceRunning by viewModel.isServiceRunning.collectAsState(initial = false)
 
-    // Локальное состояние для статуса датчиков
-    var sensorStatus by remember { mutableStateOf("") }
+    // Загружаем почасовые данные
+    LaunchedEffect(key1 = Unit) {
+        viewModel.loadHourlySteps(context)
+    }
 
     var showPermissionDialog by remember { mutableStateOf(false) }
 
-    LaunchedEffect(Unit) {
-        val hasActivityRecognition = ContextCompat.checkSelfPermission(
-            context,
-            Manifest.permission.ACTIVITY_RECOGNITION
-        ) == PackageManager.PERMISSION_GRANTED
-
-        if (!hasActivityRecognition) {
-            showPermissionDialog = true
-        } else if (!isServiceRunning) {
-            onStartServices()
-        }
-    }
-
-    // Диалог запроса разрешений
+    // Диалог запроса разрешений (если нужно)
     if (showPermissionDialog) {
         AlertDialog(
             onDismissRequest = { showPermissionDialog = false },
             title = { Text("Необходимы разрешения") },
             text = {
-                Text(
-                    "Для работы шагомера необходимы следующие разрешения:\n\n" +
-                            "• Отслеживание физической активности\n" +
-                            "• Работа в фоновом режиме\n" +
-                            "• Показ уведомлений\n\n" +
-                            "Приложение будет запрашивать эти разрешения."
-                )
+                Text("Для работы шагомера нужны разрешения на отслеживание активности")
             },
             confirmButton = {
-                Button(
-                    onClick = {
-                        showPermissionDialog = false
-                        onRequestPermissions()
-                    }
-                ) {
+                Button(onClick = {
+                    showPermissionDialog = false
+                    onRequestPermissions()
+                }) {
                     Text("Продолжить")
                 }
             },
             dismissButton = {
-                TextButton(
-                    onClick = { showPermissionDialog = false }
-                ) {
+                TextButton(onClick = { showPermissionDialog = false }) {
                     Text("Позже")
                 }
             }
         )
     }
 
-    // Функция для проверки датчиков
-    fun checkSensors() {
-        try {
-            val sensorManager = context.getSystemService(Context.SENSOR_SERVICE) as SensorManager
-            val stepCounter = sensorManager.getDefaultSensor(Sensor.TYPE_STEP_COUNTER)
-            val stepDetector = sensorManager.getDefaultSensor(Sensor.TYPE_STEP_DETECTOR)
-
-            val sensorInfo = StringBuilder()
-            sensorInfo.append("ПРОВЕРКА ДАТЧИКОВ:\n")
-            sensorInfo.append("• STEP_COUNTER: ${if (stepCounter != null) "✅ Есть (${stepCounter.name})" else "❌ Нет"}\n")
-            sensorInfo.append("• STEP_DETECTOR: ${if (stepDetector != null) "✅ Есть (${stepDetector.name})" else "❌ Нет"}\n")
-            sensorInfo.append("\nКак работают датчики:\n")
-            sensorInfo.append("- STEP_COUNTER: Считает ВСЕ шаги с последней перезагрузки\n")
-            sensorInfo.append("- STEP_DETECTOR: Детектирует КАЖДЫЙ шаг отдельно\n")
-
-            if (stepCounter == null && stepDetector == null) {
-                sensorInfo.append("\n⚠ ВНИМАНИЕ: На устройстве НЕТ датчиков шагов!\n")
-                sensorInfo.append("Приложение не сможет считать шаги.")
-            }
-
-            sensorStatus = sensorInfo.toString()
-        } catch (e: Exception) {
-            sensorStatus = "❌ Ошибка проверки: ${e.message}"
-        }
-    }
-    // create interface
     LazyColumn(
         modifier = Modifier.fillMaxSize(),
         verticalArrangement = Arrangement.spacedBy(16.dp),
@@ -338,7 +294,7 @@ fun DashboardScreen(
             Card(
                 modifier = Modifier
                     .fillMaxWidth()
-                    .height(300.dp)
+                    .height(350.dp)  // ★ Высота для графика
                     .padding(horizontal = 16.dp)
             ) {
                 Column(
@@ -351,29 +307,22 @@ fun DashboardScreen(
 
                     Spacer(modifier = Modifier.height(8.dp))
 
-                    if (hourlySteps.isEmpty()) {
+                    if (hourlySteps.isEmpty() || hourlySteps.all { it.second == 0 }) {
                         Box(
                             modifier = Modifier.fillMaxSize(),
                             contentAlignment = Alignment.Center
                         ) {
-                            Text("Данные о шагах отсутствуют")
-                        }
-                    } else {
-                        // Простой список вместо графика для начала
-                        Column(
-                            modifier = Modifier.fillMaxSize()
-                        ) {
-                            hourlySteps.forEach { (hour, steps) ->
-                                Row(
-                                    modifier = Modifier.fillMaxWidth(),
-                                    horizontalArrangement = Arrangement.SpaceBetween
-                                ) {
-                                    Text("$hour:00")
-                                    Text("$steps шагов")
-                                }
-                                Spacer(modifier = Modifier.height(4.dp))
+                            Column(
+                                horizontalAlignment = Alignment.CenterHorizontally
+                            ) {
+                                Text("Нет данных о шагах")
+                                Text("Пройдите немного, чтобы увидеть график",
+                                    style = MaterialTheme.typography.bodySmall)
                             }
                         }
+                    } else {
+                        // ★★ ВОТ ЗДЕСЬ ИСПОЛЬЗУЕМ ГРАФИК
+                        SimpleScrollableChart(hourlySteps = hourlySteps)
                     }
                 }
             }
@@ -388,7 +337,6 @@ fun DashboardScreen(
             ) {
                 Button(
                     onClick = {
-                        // Сброс шагов
                         viewModel.resetSteps(context)
                     }
                 ) {
@@ -396,5 +344,175 @@ fun DashboardScreen(
                 }
             }
         }
+    }
+}
+
+@Composable
+fun SimpleScrollableChart(hourlySteps: List<Pair<Int, Int>>) {
+    val scrollState = rememberScrollState()
+    val maxSteps = (hourlySteps.maxOfOrNull { it.second } ?: 0).coerceAtLeast(1)
+    val currentHour = Calendar.getInstance().get(Calendar.HOUR_OF_DAY)
+
+    // Вычисляем шаг для вертикальной оси
+    val yStep = when {
+        maxSteps <= 100 -> 20
+        maxSteps <= 500 -> 100
+        maxSteps <= 1000 -> 200
+        maxSteps <= 5000 -> 1000
+        else -> 2000
+    }
+
+    // Генерируем значения для оси Y
+    val yValues = generateSequence(0) { it + yStep }
+        .takeWhile { it <= maxSteps + yStep }
+        .toList()
+
+    Box(
+        modifier = Modifier.fillMaxSize()
+    ) {
+        Row(
+            modifier = Modifier.fillMaxSize(),
+            verticalAlignment = Alignment.Bottom
+        ) {
+            // Вертикальная ось с подписями
+            Column(
+                modifier = Modifier
+                    .width(40.dp)
+                    .fillMaxHeight(),
+                verticalArrangement = Arrangement.SpaceBetween,
+                horizontalAlignment = Alignment.End
+            ) {
+                yValues.reversed().forEach { value ->
+                    Text(
+                        text = if (value >= 1000) "${value / 1000}k" else value.toString(),
+                        fontSize = 10.sp,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant
+                    )
+                }
+            }
+
+            // График с прокруткой (БЕЗ SCROLLBAR)
+            Box(
+                modifier = Modifier
+                    .weight(1f)
+                    .fillMaxHeight()
+            ) {
+                // Горизонтальные линии сетки
+                Canvas(
+                    modifier = Modifier.fillMaxSize()
+                ) {
+                    val canvasHeight = size.height
+                    val stepHeight = canvasHeight / (yValues.size - 1)
+
+                    yValues.forEachIndexed { index, _ ->
+                        val y = index * stepHeight
+                        drawLine(
+                            color = Color.LightGray.copy(alpha = 0.3f),
+                            start = Offset(0f, y),
+                            end = Offset(size.width, y),
+                            strokeWidth = 1.dp.toPx()
+                        )
+                    }
+                }
+
+                // Столбцы графика с прокруткой
+                Row(
+                    modifier = Modifier
+                        .fillMaxSize()
+                        .horizontalScroll(scrollState)
+                        .padding(start = 8.dp, end = 8.dp),
+                    horizontalArrangement = Arrangement.spacedBy(8.dp), // Увеличил расстояние
+                    verticalAlignment = Alignment.Bottom
+                ) {
+                    hourlySteps.forEach { (hour, steps) ->
+                        // Высота столбца в процентах от максимального значения
+                        val heightPercentage = if (maxSteps > 0) {
+                            steps.toFloat() / maxSteps
+                        } else {
+                            0f
+                        }
+
+                        val barHeight = heightPercentage * 180.dp
+                        val isCurrentHour = hour == currentHour
+
+                        Column(
+                            horizontalAlignment = Alignment.CenterHorizontally,
+                            verticalArrangement = Arrangement.Bottom,
+                            modifier = Modifier.width(32.dp) // Увеличил ширину
+                        ) {
+                            // Количество шагов над столбцом
+                            if (steps > 0) {
+                                Text(
+                                    text = formatSteps(steps),
+                                    fontSize = 9.sp,
+                                    color = MaterialTheme.colorScheme.onSurface,
+                                    modifier = Modifier.padding(bottom = 4.dp),
+                                    maxLines = 1
+                                )
+                            }
+
+                            // Столбец
+                            Box(
+                                modifier = Modifier
+                                    .width(20.dp)
+                                    .height(barHeight)
+                                    .background(
+                                        color = if (isCurrentHour) {
+                                            MaterialTheme.colorScheme.secondary
+                                        } else {
+                                            MaterialTheme.colorScheme.primary
+                                        },
+                                        shape = MaterialTheme.shapes.small
+                                    )
+                            )
+
+                            // Подпись часа
+                            Text(
+                                text = if (hour % 2 == 0) hour.toString() else "", // Показываем каждый четный час
+                                fontSize = 10.sp,
+                                color = MaterialTheme.colorScheme.onSurface,
+                                modifier = Modifier.padding(top = 4.dp)
+                            )
+                        }
+                    }
+                }
+            }
+        }
+
+        // Подпись оси X
+        Box(
+            modifier = Modifier
+                .align(Alignment.BottomStart)
+                .padding(start = 48.dp, bottom = 8.dp)
+        ) {
+            Text(
+                text = "Часы",
+                fontSize = 12.sp,
+                color = MaterialTheme.colorScheme.onSurfaceVariant
+            )
+        }
+
+        // Подпись оси Y
+        Box(
+            modifier = Modifier
+                .align(Alignment.TopStart)
+                .padding(start = 4.dp, top = 8.dp)
+                .rotate(-90f)
+        ) {
+            Text(
+                text = "Шаги",
+                fontSize = 12.sp,
+                color = MaterialTheme.colorScheme.onSurfaceVariant
+            )
+        }
+    }
+}
+
+// Вспомогательная функция для форматирования шагов
+private fun formatSteps(steps: Int): String {
+    return when {
+        steps >= 1000000 -> "${steps / 1000000}M"
+        steps >= 1000 -> "${steps / 1000}k"
+        else -> steps.toString()
     }
 }

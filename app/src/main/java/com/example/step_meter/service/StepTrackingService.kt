@@ -1,5 +1,10 @@
 package com.example.step_meter.service
 
+import com.example.step_meter.data.database.repository.StepRepository
+import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.launch
+
 import android.app.*
 import android.content.*
 import android.hardware.Sensor
@@ -11,6 +16,7 @@ import android.util.Log
 import androidx.core.app.NotificationCompat
 import com.example.step_meter.MainActivity
 import com.example.step_meter.R
+import java.text.SimpleDateFormat
 import java.util.*
 
 class StepTrackingService : Service(), SensorEventListener {
@@ -20,6 +26,7 @@ class StepTrackingService : Service(), SensorEventListener {
         private const val PREFS_NAME = "step_prefs"
         private const val KEY_LAST_STEP_COUNT = "last_step_count"
         private const val KEY_SAVED_TOTAL = "saved_total"
+        private const val KEY_CURRENT_DATE = "current_date"
     }
 
     private lateinit var sensorManager: SensorManager
@@ -32,49 +39,75 @@ class StepTrackingService : Service(), SensorEventListener {
     private var lastStepCounterValue = 0f
     private var appTotalSteps = 0
 
+    private var lastSavedHour = -1
+    private var lastStepCountForHour = 0
+    private var currentDate = ""
+    private val repository by lazy { StepRepository.getInstance(this) }
+
     private val resetReceiver = object : BroadcastReceiver() {
         override fun onReceive(context: Context?, intent: Intent?) {
             if (intent?.action == "RESET_STEPS_ACTION") {
-                Log.e(TAG, "🔄 ПОЛУЧЕНА КОМАНДА СБРОСА!")
+                Log.d(TAG, "🔄 ПОЛУЧЕНА КОМАНДА СБРОСА!")
                 resetStepCounter()
+            }
+        }
+    }
+
+    private val requestReceiver = object : BroadcastReceiver() {
+        override fun onReceive(context: Context?, intent: Intent?) {
+            if (intent?.action == "REQUEST_STEPS_ACTION") {
+                Log.d(TAG, "📬 Получен запрос на обновление шагов")
+                sendStepsToApp(appTotalSteps)
             }
         }
     }
 
     override fun onCreate() {
         super.onCreate()
-        Log.e(TAG, "🔥 onCreate() вызван")
+        Log.d(TAG, "🔥 onCreate() вызван")
 
         sharedPrefs = getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE)
 
         // Загружаем сохраненные значения
         appTotalSteps = sharedPrefs.getInt(KEY_SAVED_TOTAL, 0)
+        lastStepCountForHour = appTotalSteps
         lastStepCounterValue = sharedPrefs.getFloat(KEY_LAST_STEP_COUNT, 0f)
 
-        Log.e(TAG, "📊 Загружено: steps=$appTotalSteps, last=$lastStepCounterValue")
+        // Проверяем смену дня
+        checkDateChange()
+
+        Log.d(TAG, "📊 Загружено: steps=$appTotalSteps, last=$lastStepCounterValue")
 
         // Регистрируем receiver для сброса
-        val filter = IntentFilter("RESET_STEPS_ACTION")
+        val resetFilter = IntentFilter("RESET_STEPS_ACTION")
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
-            registerReceiver(resetReceiver, filter, RECEIVER_EXPORTED)
+            registerReceiver(resetReceiver, resetFilter, RECEIVER_EXPORTED)
         } else {
-            registerReceiver(resetReceiver, filter)
+            registerReceiver(resetReceiver, resetFilter)
+        }
+
+        // Регистрируем receiver для запросов
+        val requestFilter = IntentFilter("REQUEST_STEPS_ACTION")
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
+            registerReceiver(requestReceiver, requestFilter, RECEIVER_EXPORTED)
+        } else {
+            registerReceiver(requestReceiver, requestFilter)
         }
 
         sendStepsToApp(appTotalSteps)
-        showNotification("Запуск отслеживания...")
         initSensors()
+        updateNotification("Служба запущена")
     }
 
     private fun initSensors() {
         try {
             sensorManager = getSystemService(Context.SENSOR_SERVICE) as SensorManager
 
-            // ★★ ПЕРВЫЙ ВЫБОР: STEP_COUNTER (самый точный)
+            // ПЕРВЫЙ ВЫБОР: STEP_COUNTER (самый точный)
             stepSensor = sensorManager.getDefaultSensor(Sensor.TYPE_STEP_COUNTER)
 
             if (stepSensor != null) {
-                Log.e(TAG, "✅ Найден STEP_COUNTER: ${stepSensor!!.name}")
+                Log.d(TAG, "✅ Найден STEP_COUNTER: ${stepSensor!!.name}")
                 useStepDetector = false
 
                 val success = sensorManager.registerListener(
@@ -84,17 +117,16 @@ class StepTrackingService : Service(), SensorEventListener {
                 )
 
                 if (success) {
-                    Log.e(TAG, "✅ STEP_COUNTER зарегистрирован")
-                    showNotification("Счетчик шагов активен")
+                    Log.d(TAG, "✅ STEP_COUNTER зарегистрирован")
                     return
                 }
             }
 
-            // ★★ ВТОРОЙ ВЫБОР: STEP_DETECTOR (встроенный Android)
+            // ВТОРОЙ ВЫБОР: STEP_DETECTOR (встроенный Android)
             stepSensor = sensorManager.getDefaultSensor(Sensor.TYPE_STEP_DETECTOR)
 
             if (stepSensor != null) {
-                Log.e(TAG, "✅ Найден STEP_DETECTOR: ${stepSensor!!.name}")
+                Log.d(TAG, "✅ Найден STEP_DETECTOR: ${stepSensor!!.name}")
                 useStepDetector = false
 
                 val success = sensorManager.registerListener(
@@ -104,20 +136,18 @@ class StepTrackingService : Service(), SensorEventListener {
                 )
 
                 if (success) {
-                    Log.e(TAG, "✅ STEP_DETECTOR зарегистрирован")
-                    showNotification("Детектор шагов активен")
+                    Log.d(TAG, "✅ STEP_DETECTOR зарегистрирован")
                     return
                 }
             }
 
-            // ★★ ТРЕТИЙ ВЫБОР: StepDetector (наш, через акселерометр)
-            Log.e(TAG, "⚠ Нет встроенных датчиков, использую StepDetector")
+            // ТРЕТИЙ ВЫБОР: StepDetector (наш, через акселерометр)
+            Log.d(TAG, "⚠ Нет встроенных датчиков, использую StepDetector")
             useStepDetector = true
             initCustomStepDetector()
 
         } catch (e: Exception) {
             Log.e(TAG, "❌ Ошибка инициализации: ${e.message}")
-            showNotification("Ошибка датчиков")
         }
     }
 
@@ -125,8 +155,14 @@ class StepTrackingService : Service(), SensorEventListener {
         stepDetector = StepDetector().apply {
             setStepListener(object : StepDetector.StepListener {
                 override fun onStep(count: Int) {
-                    // Для StepDetector count - это общее количество шагов
-                    handleStepDetectorEvent(count)
+                    appTotalSteps = count
+                    saveTotalSteps(appTotalSteps)
+
+                    Log.d(TAG, "📱 StepDetector: всего шагов = $appTotalSteps")
+
+                    saveHourlyData()
+                    sendStepsToApp(appTotalSteps)
+                    updateNotification()
                 }
             })
         }
@@ -145,8 +181,7 @@ class StepTrackingService : Service(), SensorEventListener {
         )
 
         if (success) {
-            Log.e(TAG, "✅ StepDetector зарегистрирован")
-            showNotification("Алгоритм подсчета активен")
+            Log.d(TAG, "✅ StepDetector зарегистрирован")
         }
     }
 
@@ -166,7 +201,7 @@ class StepTrackingService : Service(), SensorEventListener {
     }
 
     private fun handleStepCounter(currentSensorValue: Float) {
-        Log.e(TAG, "📈 STEP_COUNTER: $currentSensorValue")
+        Log.d(TAG, "📈 STEP_COUNTER: $currentSensorValue")
 
         if (lastStepCounterValue == 0f) {
             // Первое получение
@@ -175,7 +210,12 @@ class StepTrackingService : Service(), SensorEventListener {
 
             // Начинаем с 0
             appTotalSteps = 0
-            Log.e(TAG, "📌 Первое значение: $currentSensorValue")
+            lastStepCountForHour = 0
+
+            saveTotalSteps(0)
+            saveHourlyData()
+
+            Log.d(TAG, "📌 Первое значение STEP_COUNTER: $currentSensorValue")
 
         } else {
             // Вычисляем разницу
@@ -185,14 +225,86 @@ class StepTrackingService : Service(), SensorEventListener {
                 appTotalSteps += difference.toInt()
                 lastStepCounterValue = currentSensorValue
 
-                Log.e(TAG, "🆕 +${difference.toInt()} шагов, всего: $appTotalSteps")
+                Log.d(TAG, "🆕 STEP_COUNTER: +${difference.toInt()} шагов, всего: $appTotalSteps")
 
-                // Сохраняем и отправляем
                 saveLastStepValue(currentSensorValue)
                 saveTotalSteps(appTotalSteps)
+                saveHourlyData()
+
                 sendStepsToApp(appTotalSteps)
                 updateNotification()
             }
+        }
+    }
+
+    private fun checkDateChange() {
+        val dateFormat = SimpleDateFormat("yyyy-MM-dd", Locale.getDefault())
+        val today = dateFormat.format(Date())
+        val savedDate = sharedPrefs.getString(KEY_CURRENT_DATE, "")
+
+        if (savedDate != today) {
+            Log.d(TAG, "📅 Обнаружена смена дня: $savedDate -> $today")
+
+            // Сбрасываем счетчики для нового дня
+            lastSavedHour = -1
+            lastStepCountForHour = 0
+            lastStepCounterValue = 0f
+
+            // Сохраняем новую дату
+            sharedPrefs.edit().putString(KEY_CURRENT_DATE, today).apply()
+
+            // Сбрасываем шаги
+            appTotalSteps = 0
+            saveTotalSteps(0)
+            saveLastStepValue(0f)
+
+            Log.d(TAG, "🔄 Счетчики сброшены для нового дня")
+        }
+
+        currentDate = today
+    }
+
+    private fun saveHourlyData() {
+        try {
+            checkDateChange()
+
+            val calendar = Calendar.getInstance()
+            val currentHour = calendar.get(Calendar.HOUR_OF_DAY)
+
+            Log.d(TAG, "🕐 Текущий час: $currentHour, сохраненный: $lastSavedHour")
+
+            if (currentHour != lastSavedHour) {
+                if (lastSavedHour != -1) {
+                    val stepsForLastHour = appTotalSteps - lastStepCountForHour
+                    Log.d(TAG, "📊 Шагов за час $lastSavedHour: $stepsForLastHour")
+
+                    if (stepsForLastHour > 0) {
+                        CoroutineScope(Dispatchers.IO).launch {
+                            try {
+                                val saveCalendar = Calendar.getInstance().apply {
+                                    set(Calendar.HOUR_OF_DAY, lastSavedHour)
+                                    set(Calendar.MINUTE, 0)
+                                    set(Calendar.SECOND, 0)
+                                    set(Calendar.MILLISECOND, 0)
+                                }
+
+                                repository.saveStep(saveCalendar.time, lastSavedHour, stepsForLastHour)
+                                Log.d(TAG, "💾 Сохранено: $lastSavedHour:00 - $stepsForLastHour шагов")
+
+                            } catch (e: Exception) {
+                                Log.e(TAG, "❌ Ошибка сохранения в БД: ${e.message}")
+                            }
+                        }
+                    }
+                }
+
+                lastSavedHour = currentHour
+                lastStepCountForHour = appTotalSteps
+
+                Log.d(TAG, "🔄 Начинаем новый час $currentHour, базовое значение: $lastStepCountForHour")
+            }
+        } catch (e: Exception) {
+            Log.e(TAG, "❌ Ошибка сохранения почасовых данных: ${e.message}")
         }
     }
 
@@ -200,31 +312,15 @@ class StepTrackingService : Service(), SensorEventListener {
         appTotalSteps++
         saveTotalSteps(appTotalSteps)
 
-        Log.e(TAG, "👣 STEP_DETECTOR: Шаг! Всего: $appTotalSteps")
+        Log.d(TAG, "👣 STEP_DETECTOR: Шаг! Всего: $appTotalSteps")
 
+        saveHourlyData()
         sendStepsToApp(appTotalSteps)
         updateNotification()
     }
 
-    private fun handleStepDetectorEvent(count: Int) {
-        // Для нашего StepDetector count - это общее количество
-        // Нужно вычислить разницу
-        val newSteps = count
-        val difference = newSteps - appTotalSteps
-
-        if (difference > 0) {
-            appTotalSteps = newSteps
-            saveTotalSteps(appTotalSteps)
-
-            Log.e(TAG, "📱 StepDetector: +$difference шагов, всего: $appTotalSteps")
-
-            sendStepsToApp(appTotalSteps)
-            updateNotification()
-        }
-    }
-
     private fun resetStepCounter() {
-        Log.e(TAG, "🔄 ВЫПОЛНЯЕТСЯ СБРОС ШАГОВ!")
+        Log.d(TAG, "🔄 ВЫПОЛНЯЕТСЯ СБРОС ШАГОВ!")
 
         appTotalSteps = 0
 
@@ -240,11 +336,11 @@ class StepTrackingService : Service(), SensorEventListener {
         sendStepsToApp(0)
         updateNotification()
 
-        Log.e(TAG, "✅ Счетчик сброшен до 0")
+        Log.d(TAG, "✅ Счетчик сброшен до 0")
     }
 
     private fun saveLastStepValue(value: Float) {
-        if (!useStepDetector) {  // Только для STEP_COUNTER
+        if (!useStepDetector) {
             sharedPrefs.edit().putFloat(KEY_LAST_STEP_COUNT, value).apply()
         }
     }
@@ -255,10 +351,7 @@ class StepTrackingService : Service(), SensorEventListener {
 
     private fun sendStepsToApp(steps: Int) {
         try {
-            Log.e(TAG, "📡 Отправка в приложение: $steps шагов")
-
-            // ★★ ВАЖНО: Синхронизация уведомления и приложения
-            updateNotification("Шагов: $steps")
+            Log.d(TAG, "📡 Отправка в приложение: $steps шагов")
 
             val broadcastIntent = Intent("STEP_UPDATE_ACTION").apply {
                 putExtra("steps", steps)
@@ -271,12 +364,12 @@ class StepTrackingService : Service(), SensorEventListener {
         }
     }
 
-    private fun showNotification(text: String) {
-        updateNotification(text)
-    }
-
     private fun updateNotification(customText: String? = null) {
         try {
+            val currentSteps = sharedPrefs.getInt(KEY_SAVED_TOTAL, 0)
+            appTotalSteps = currentSteps
+
+            // Создаем канал только для Android 8.0+
             if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
                 val channel = NotificationChannel(
                     "step_channel",
@@ -284,6 +377,7 @@ class StepTrackingService : Service(), SensorEventListener {
                     NotificationManager.IMPORTANCE_LOW
                 ).apply {
                     description = "Отслеживание шагов"
+                    setShowBadge(false)
                 }
                 val manager = getSystemService(Context.NOTIFICATION_SERVICE) as NotificationManager
                 if (manager.getNotificationChannel("step_channel") == null) {
@@ -294,9 +388,15 @@ class StepTrackingService : Service(), SensorEventListener {
             val intent = Intent(this, MainActivity::class.java).apply {
                 flags = Intent.FLAG_ACTIVITY_CLEAR_TOP or Intent.FLAG_ACTIVITY_SINGLE_TOP
             }
-            val pendingIntent = PendingIntent.getActivity(
-                this, 0, intent,
+
+            val pendingIntentFlags = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.M) {
                 PendingIntent.FLAG_IMMUTABLE or PendingIntent.FLAG_UPDATE_CURRENT
+            } else {
+                PendingIntent.FLAG_UPDATE_CURRENT
+            }
+
+            val pendingIntent = PendingIntent.getActivity(
+                this, 0, intent, pendingIntentFlags
             )
 
             val source = when {
@@ -305,48 +405,60 @@ class StepTrackingService : Service(), SensorEventListener {
                 else -> "(детектор)"
             }
 
-            val notificationText = customText ?: "Шагов: $appTotalSteps $source"
+            val notificationText = if (currentSteps > 0) {
+                customText ?: "Шагов: $currentSteps $source"
+            } else {
+                customText ?: "Начните ходить!"
+            }
 
-            val notification = NotificationCompat.Builder(this, "step_channel")
+            val builder = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
+                NotificationCompat.Builder(this, "step_channel")
+            } else {
+                NotificationCompat.Builder(this)
+                    .setPriority(NotificationCompat.PRIORITY_LOW)
+            }
+
+            val notification = builder
                 .setContentTitle("Шагомер")
                 .setContentText(notificationText)
                 .setSmallIcon(R.drawable.ic_walk)
                 .setContentIntent(pendingIntent)
                 .setOngoing(true)
                 .setOnlyAlertOnce(true)
-                .setPriority(NotificationCompat.PRIORITY_LOW)
                 .setAutoCancel(false)
+                .setSilent(true)
                 .build()
 
             startForeground(1, notification)
+
+            Log.d(TAG, "📢 Уведомление: $notificationText")
 
         } catch (e: Exception) {
             Log.e(TAG, "❌ Ошибка уведомления: ${e.message}")
         }
     }
 
-    override fun onAccuracyChanged(sensor: Sensor?, accuracy: Int) {
-        // Не нужно логировать
-    }
+    override fun onAccuracyChanged(sensor: Sensor?, accuracy: Int) {}
 
     override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {
-        Log.e(TAG, "▶ onStartCommand()")
-        sendStepsToApp(appTotalSteps)  // ★ Синхронизация при старте
+        Log.d(TAG, "▶ onStartCommand()")
+        sendStepsToApp(appTotalSteps)
         return START_STICKY
     }
 
     override fun onBind(intent: Intent?): IBinder? = null
 
     override fun onDestroy() {
-        Log.e(TAG, "🛑 Сервис остановлен")
+        Log.d(TAG, "🛑 Сервис остановлен")
         try {
             sensorManager.unregisterListener(this)
             if (useStepDetector) {
                 sensorManager.unregisterListener(stepDetector)
             }
             unregisterReceiver(resetReceiver)
+            unregisterReceiver(requestReceiver)
         } catch (e: Exception) {
-            // Игнорируем
+            Log.e(TAG, "Ошибка при остановке: ${e.message}")
         }
         super.onDestroy()
     }
