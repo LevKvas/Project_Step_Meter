@@ -20,6 +20,8 @@ import com.example.step_meter.R
 import java.text.SimpleDateFormat
 import java.util.*
 
+// constantly counts steps
+
 class StepTrackingService : Service(), SensorEventListener {
 
     companion object {
@@ -70,17 +72,16 @@ class StepTrackingService : Service(), SensorEventListener {
 
         sharedPrefs = getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE)
 
-        // Загружаем сохраненные значения
+        // load save data
         appTotalSteps = sharedPrefs.getInt(KEY_SAVED_TOTAL, 0)
         lastStepCountForHour = appTotalSteps
         lastStepCounterValue = sharedPrefs.getFloat(KEY_LAST_STEP_COUNT, 0f)
 
-        // Проверяем смену дня
+        // check days change
         checkDateChange()
 
         Log.d(TAG, "📊 Загружено: steps=$appTotalSteps, last=$lastStepCounterValue")
 
-        // Регистрируем receiver для сброса
         val resetFilter = IntentFilter("RESET_STEPS_ACTION")
 
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
@@ -97,9 +98,9 @@ class StepTrackingService : Service(), SensorEventListener {
 
     private fun initSensors() {
         try {
-            sensorManager = getSystemService(Context.SENSOR_SERVICE) as SensorManager
+            sensorManager = getSystemService(SENSOR_SERVICE) as SensorManager
 
-            // ПЕРВЫЙ ВЫБОР: STEP_COUNTER (самый точный)
+            // first variant - step counter
             stepSensor = sensorManager.getDefaultSensor(Sensor.TYPE_STEP_COUNTER)
 
             if (stepSensor != null) {
@@ -118,7 +119,7 @@ class StepTrackingService : Service(), SensorEventListener {
                 }
             }
 
-            // ВТОРОЙ ВЫБОР: STEP_DETECTOR (встроенный Android)
+            // second variant - use step detector in Android
             stepSensor = sensorManager.getDefaultSensor(Sensor.TYPE_STEP_DETECTOR)
 
             if (stepSensor != null) {
@@ -137,7 +138,7 @@ class StepTrackingService : Service(), SensorEventListener {
                 }
             }
 
-            // ТРЕТИЙ ВЫБОР: StepDetector (наш, через акселерометр)
+            // third variant - use my step detector
             Log.d(TAG, "⚠ Нет встроенных датчиков, использую StepDetector")
             useStepDetector = true
             initCustomStepDetector()
@@ -200,11 +201,11 @@ class StepTrackingService : Service(), SensorEventListener {
         Log.d(TAG, "📈 STEP_COUNTER: $currentSensorValue")
 
         if (lastStepCounterValue == 0f) {
-            // Первое получение
+            // First receipt
             lastStepCounterValue = currentSensorValue
             saveLastStepValue(currentSensorValue)
 
-            // Начинаем с 0
+            // start from zero
             appTotalSteps = 0
             lastStepCountForHour = 0
 
@@ -214,7 +215,7 @@ class StepTrackingService : Service(), SensorEventListener {
             Log.d(TAG, "📌 Первое значение STEP_COUNTER: $currentSensorValue")
 
         } else {
-            // Вычисляем разницу
+            // count difference
             val difference = currentSensorValue - lastStepCounterValue
 
             if (difference > 0) {
@@ -239,7 +240,7 @@ class StepTrackingService : Service(), SensorEventListener {
             Log.d(TAG, "🔴 ТЕСТ: Сохраняю $appTotalSteps шагов для часа $currentHour")
 
             try {
-                // Используем ТЕКУЩЕЕ время (не обнуляем минуты)
+                // use current time
                 repository.saveStep(calendar.time, currentHour, appTotalSteps)
                 Log.d(TAG, "✅ ТЕСТ: Успешно сохранено в БД")
             } catch (e: Exception) {
@@ -256,15 +257,15 @@ class StepTrackingService : Service(), SensorEventListener {
         if (savedDate != today) {
             Log.d(TAG, "📅 Обнаружена смена дня: $savedDate -> $today")
 
-            // Сбрасываем счетчики для нового дня
+            // Resetting the counters for a new day
             lastSavedHour = -1
             lastStepCountForHour = 0
             lastStepCounterValue = 0f
 
-            // Сохраняем новую дату
+            // save a new data
             sharedPrefs.edit().putString(KEY_CURRENT_DATE, today).apply()
 
-            // Сбрасываем шаги
+            // reset steps
             appTotalSteps = 0
             saveTotalSteps(0)
             saveLastStepValue(0f)
@@ -281,19 +282,18 @@ class StepTrackingService : Service(), SensorEventListener {
             val calendar = Calendar.getInstance()
             val currentHour = calendar.get(Calendar.HOUR_OF_DAY)
 
-            // Вычисляем шаги за текущий час
+            // count steps for the current hour
             val stepsThisHour = appTotalSteps - lastStepCountForHour
 
             if (stepsThisHour > 0) {
                 CoroutineScope(Dispatchers.IO).launch {
                     try {
-                        // ⚠️ ВАЖНО: ОБНУЛЯЕМ ВРЕМЯ как в ViewModel!
                         val saveCalendar = Calendar.getInstance().apply {
                             timeInMillis = System.currentTimeMillis()
-                            set(Calendar.HOUR_OF_DAY, 0)     // ← ОБНУЛЯЕМ!
-                            set(Calendar.MINUTE, 0)          // ← ОБНУЛЯЕМ!
-                            set(Calendar.SECOND, 0)          // ← ОБНУЛЯЕМ!
-                            set(Calendar.MILLISECOND, 0)     // ← ОБНУЛЯЕМ!
+                            set(Calendar.HOUR_OF_DAY, 0)
+                            set(Calendar.MINUTE, 0)
+                            set(Calendar.SECOND, 0)
+                            set(Calendar.MILLISECOND, 0)
                         }
 
                         val todayDate = saveCalendar.time
@@ -348,7 +348,7 @@ class StepTrackingService : Service(), SensorEventListener {
                 val today = calendar.time
                 val currentHour = Calendar.getInstance().get(Calendar.HOUR_OF_DAY)
 
-                // Удаляем только запись за текущий час
+                // delete only the entry for the current hour
                 repository.deleteStepForHour(today, currentHour)
 
                 Log.d(TAG, "🗑️ Удалены данные за час $currentHour")

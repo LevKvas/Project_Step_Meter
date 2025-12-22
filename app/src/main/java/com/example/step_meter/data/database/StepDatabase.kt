@@ -9,11 +9,13 @@ import androidx.room.TypeConverters
 import com.example.step_meter.data.database.converters.DateConverter
 import com.example.step_meter.data.database.model.StepData
 
+// Database Factory
+
 @Database(
     entities = [StepData::class],
     version = 1,
     exportSchema = false
-)
+) // to create database with this characteristics
 @TypeConverters(DateConverter::class)
 abstract class StepDatabase : RoomDatabase() {
     abstract fun stepDao(): StepDao

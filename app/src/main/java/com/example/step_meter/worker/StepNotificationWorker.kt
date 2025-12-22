@@ -18,11 +18,10 @@ class StepNotificationWorker(
     override suspend fun doWork(): Result = withContext(Dispatchers.IO) {
         try {
             val sharedPrefs = applicationContext.getSharedPreferences(
-                "step_prefs",  // Должно совпадать с StepTrackingService.PREFS_NAME
+                "step_prefs",
                 Context.MODE_PRIVATE
             )
 
-            // Берем шаги из SharedPreferences
             val totalSteps = sharedPrefs.getInt("saved_total", 0) // KEY_SAVED_TOTAL
 
             val motivationMessage = when {

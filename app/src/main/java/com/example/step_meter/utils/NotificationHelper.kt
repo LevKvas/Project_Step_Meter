@@ -18,7 +18,7 @@ object NotificationHelper {
             Context.NOTIFICATION_SERVICE
         ) as NotificationManager
 
-        // Создаем канал уведомлений (для API 26+)
+        // create the channel for notifications
         if (android.os.Build.VERSION.SDK_INT >= android.os.Build.VERSION_CODES.O) {
             val channel = NotificationChannel(
                 CHANNEL_ID,
@@ -30,7 +30,7 @@ object NotificationHelper {
             notificationManager.createNotificationChannel(channel)
         }
 
-        // Интент для открытия приложения при нажатии на уведомление
+        // Intent to open the app when clicking on the notification
         val intent = Intent(context, MainActivity::class.java)
         val pendingIntent = PendingIntent.getActivity(
             context,
@@ -39,7 +39,7 @@ object NotificationHelper {
             PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE
         )
 
-        // Создаем уведомление
+        // create notification
         val notification = NotificationCompat.Builder(context, CHANNEL_ID)
             .setContentTitle("Ваша активность сегодня")
             .setContentText("Вы прошли $steps шагов. $motivation")

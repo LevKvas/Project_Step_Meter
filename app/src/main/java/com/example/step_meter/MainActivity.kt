@@ -27,9 +27,6 @@ import com.example.step_meter.ui.theme.Step_meterTheme
 import com.example.step_meter.utils.StepScheduler
 import com.example.step_meter.viewmodel.StepViewModel
 import androidx.activity.viewModels
-import androidx.compose.foundation.Canvas
-import androidx.compose.ui.geometry.Offset
-import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.unit.sp
 import androidx.compose.foundation.horizontalScroll
 import androidx.compose.foundation.rememberScrollState
@@ -37,12 +34,10 @@ import java.util.*
 import androidx.compose.foundation.background
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.ui.unit.times
-import androidx.compose.foundation.border
 import kotlinx.coroutines.delay
 
 class MainActivity : ComponentActivity() {
-
-    // Разрешения для Android 14+
+    // necessary permissions
     private val permissions = mutableListOf<String>().apply {
         add(Manifest.permission.ACTIVITY_RECOGNITION) // for count steps
 
@@ -114,7 +109,7 @@ class MainActivity : ComponentActivity() {
     override fun onResume() {
         super.onResume()
 
-        // ★ ПРОВЕРЯЕМ разрешения перед регистрацией
+        // We check permissions before registration
         checkAndRequestPermissions()
 
         val filter = IntentFilter().apply {
@@ -133,19 +128,19 @@ class MainActivity : ComponentActivity() {
             Log.e("MAIN_ACTIVITY", "❌ Ошибка регистрации receiver: ${e.message}")
         }
 
-        // ★ ПРИ ВОЗОБНОВЛЕНИИ ЗАПУСКАЕМ СЕРВИС
+        // When resuming, we start the service
         startServices()
     }
 
     override fun onPause() { // when something starts to block
         super.onPause()
 
-        // Отписываемся от BroadcastReceiver
+        // Unsubscribe from BroadcastReceiver
         try {
             unregisterReceiver(stepUpdateReceiver)
             Log.e("MAIN_ACTIVITY", "✅ BroadcastReceiver отписан")
         } catch (e: Exception) {
-            // Игнорируем если не зарегистрирован
+            // ignore
         }
     }
 
@@ -175,7 +170,7 @@ class MainActivity : ComponentActivity() {
 
             Log.e("MAIN_ACTIVITY", "✅ Сервис запущен")
 
-            // Запускаем планировщик уведомлений
+            // Launch the notification scheduler
             StepScheduler.scheduleHourlyNotifications(this)
 
         } catch (e: Exception) {
@@ -201,14 +196,14 @@ fun DashboardScreen(
     val totalSteps by viewModel.totalSteps.collectAsState(initial = 0)
     val isServiceRunning by viewModel.isServiceRunning.collectAsState(initial = false)
 
-    // Загружаем почасовые данные
+    // Loading hourly data
     LaunchedEffect(key1 = Unit) {
         viewModel.loadHourlySteps(context)
     }
 
     var showPermissionDialog by remember { mutableStateOf(false) }
 
-    // Диалог запроса разрешений (если нужно)
+    // Permission request dialog (if needed)
     if (showPermissionDialog) {
         AlertDialog(
             onDismissRequest = { showPermissionDialog = false },
@@ -295,11 +290,13 @@ fun DashboardScreen(
             Card(
                 modifier = Modifier
                     .fillMaxWidth()
-                    .height(350.dp)  // ★ Высота для графика
+                    .height(350.dp)  // Height for graph
                     .padding(horizontal = 16.dp)
             ) {
                 Column(
-                    modifier = Modifier.fillMaxSize().padding(16.dp)
+                    modifier = Modifier
+                        .fillMaxSize()
+                        .padding(16.dp)
                 ) {
                     Text(
                         text = "Активность по часам",
@@ -322,7 +319,7 @@ fun DashboardScreen(
                             }
                         }
                     } else {
-                        // ★★ ВОТ ЗДЕСЬ ИСПОЛЬЗУЕМ ГРАФИК
+                        // use graph
                         SimpleScrollableChart(hourlySteps = hourlySteps)
                     }
                 }
@@ -348,18 +345,18 @@ fun DashboardScreen(
     }
 }
 
+// activity chart for the last 7 hours
 @Composable
 fun SimpleScrollableChart(hourlySteps: List<Pair<Int, Int>>) {
     val scrollState = rememberScrollState()
     var currentHour by remember { mutableIntStateOf(Calendar.getInstance().get(Calendar.HOUR_OF_DAY)) }
 
-    // ★★ ВЫЧИСЛЯЕМ recentHours на основе hourlySteps и текущего часа
     val recentHours = remember(hourlySteps, currentHour) {
-        // Получаем последние 7 часов относительно текущего часа
+        // We get the last 7 hours relative to the current time
         val hoursToShow = (0..6).map { offset ->
-            val hour = (currentHour - offset + 24) % 24 // вычитаем offset для последних часов
+            val hour = (currentHour - offset + 24) % 24
             hour
-        }.reversed() // разворачиваем, чтобы шло от старых к новым
+        }.reversed()
 
         hoursToShow.map { hour ->
             hour to (hourlySteps.find { it.first == hour }?.second ?: 0)
@@ -368,16 +365,17 @@ fun SimpleScrollableChart(hourlySteps: List<Pair<Int, Int>>) {
 
     LaunchedEffect(Unit) {
         while (true) {
-            delay(60 * 1000L) // every minute
+            delay(60 * 1000L) // every minute check
             val newHour = Calendar.getInstance().get(Calendar.HOUR_OF_DAY)
 
             if (newHour != currentHour) {
-                currentHour = newHour
+                currentHour = newHour // update
                 Log.d("GRAPH_UPDATE", "🔄 Час сменился: $currentHour")
             }
         }
     }
 
+    // to pict the graph
     Box(
         modifier = Modifier.fillMaxSize()
     ) {
@@ -412,7 +410,7 @@ fun SimpleScrollableChart(hourlySteps: List<Pair<Int, Int>>) {
                         verticalArrangement = Arrangement.Bottom,
                         modifier = Modifier.width(48.dp)
                     ) {
-                        // Точка
+                        // Point
                         if (steps > 0) {
                             Box(
                                 modifier = Modifier
@@ -427,7 +425,7 @@ fun SimpleScrollableChart(hourlySteps: List<Pair<Int, Int>>) {
                                     )
                             )
 
-                            // Количество шагов
+                            // Number of steps
                             Text(
                                 text = if (steps > 1000) "${steps / 1000}k" else steps.toString(),
                                 fontSize = 9.sp,
@@ -437,7 +435,6 @@ fun SimpleScrollableChart(hourlySteps: List<Pair<Int, Int>>) {
                             )
                         }
 
-                        // Время - с ФИКСИРОВАННОЙ высотой
                         Box(
                             modifier = Modifier
                                 .height(24.dp)

@@ -10,15 +10,14 @@ class StepDetector : SensorEventListener {
 
     private var totalSteps = 0
     private var lastStepTime = 0L
-    private val stepDelay = 300000000L // 300ms между шагами (нормальная ходьба)
-    private var lastAcceleration = 9.8f // Начинаем с гравитации (9.8 м/с²)
+    private val stepDelay = 300000000L
+    private var lastAcceleration = 9.8f
 
-    // ★ ОПТИМИЗИРОВАННЫЕ ПОРОГИ (более чувствительные)
-    private val stepThreshold = 1.5f // Уменьшили порог
-    private val minAcceleration = 8.0f  // Минимальное допустимое ускорение
-    private val maxAcceleration = 20.0f // Максимальное допустимое ускорение
+    private val stepThreshold = 1.5f
+    private val minAcceleration = 8.0f  // Minimum permissible acceleration
+    private val maxAcceleration = 20.0f // Maximum permissible acceleration
 
-    // ★ ПРОСТОЙ ФИЛЬТР (без сложной логики)
+    // simple filter
     private val accelerationBuffer = FloatArray(3)
     private var bufferIndex = 0
 
@@ -34,10 +33,10 @@ class StepDetector : SensorEventListener {
             val y = event.values[1]
             val z = event.values[2]
 
-            // Вычисляем общее ускорение
+            // common accelerate
             val acceleration = sqrt((x * x + y * y + z * z).toDouble()).toFloat()
 
-            // ★ ПРОСТОЕ СГЛАЖИВАНИЕ (скользящее среднее)
+            // moving average method
             accelerationBuffer[bufferIndex] = acceleration
             bufferIndex = (bufferIndex + 1) % accelerationBuffer.size
 
@@ -46,19 +45,12 @@ class StepDetector : SensorEventListener {
             val currentTime = System.nanoTime()
             val delta = smoothedAcceleration - lastAcceleration
 
-            // ★ ПРОСТЫЕ УСЛОВИЯ ДЛЯ ОБНАРУЖЕНИЯ ШАГА:
-            // 1. Ускорение в разумных пределах (не слишком мало/много)
-            // 2. Резкое увеличение ускорения (положительный пик)
-            // 3. Прошел минимальный интервал между шагами
-
             val timeSinceLastStep = currentTime - lastStepTime
 
             if (smoothedAcceleration in minAcceleration..maxAcceleration &&
-                delta > stepThreshold && // Положительный пик
+                delta > stepThreshold &&
                 timeSinceLastStep > stepDelay) {
 
-                // ★ ДОПОЛНИТЕЛЬНАЯ ПРОВЕРКА: пик должен смениться спадом
-                // Это помогает отличить шаг от постоянной тряски
                 if (isRealStepPattern(smoothedAcceleration, lastAcceleration)) {
 
                     lastStepTime = currentTime
@@ -79,13 +71,12 @@ class StepDetector : SensorEventListener {
     }
 
     private fun isRealStepPattern(current: Float, previous: Float): Boolean {
-        // Простая проверка: после пика должно быть уменьшение
-        // (шаг = удар ногой → отскок)
-        return true // Пока упростим, можно доработать
+        // after the peak there should be a decrease
+        return true
     }
 
     override fun onAccuracyChanged(sensor: Sensor?, accuracy: Int) {
-        // Не используется
+        // do not use
     }
 
     fun resetSteps() {
@@ -97,7 +88,6 @@ class StepDetector : SensorEventListener {
         Log.d("StepDetector", "🔄 StepDetector сброшен")
     }
 
-    fun getStepCount(): Int = totalSteps
 
     interface StepListener {
         fun onStep(count: Int)

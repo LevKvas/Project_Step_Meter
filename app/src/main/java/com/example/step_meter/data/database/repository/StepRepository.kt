@@ -12,7 +12,7 @@ import kotlinx.coroutines.flow.distinctUntilChanged
 // brain of my app
 
 class StepRepository private constructor(context: Context) {
-
+    // to get access to the database using DAO
     private val stepDao = StepDatabase.getDatabase(context).stepDao()
 
     // StepRepository.kt
@@ -32,22 +32,11 @@ class StepRepository private constructor(context: Context) {
             Log.d("REPO_SAVE", "➕ Создано: $newData")
         }
 
-        // Проверим что сохранилось
+        // check what's saved
         val check = stepDao.getStepsByHour(date, hour)
         Log.d("REPO_SAVE", "✅ Проверка: $check")
     }
 
-    // StepRepository.kt - добавь этот метод
-    suspend fun deleteStepsForDate(date: Date) {
-        stepDao.deleteByDate(date)
-    }
-
-    // Если хочешь, можешь добавить и полную очистку:
-    suspend fun deleteAllSteps() {
-        stepDao.deleteAll()
-    }
-
-    // StepRepository.kt
     suspend fun deleteStepForHour(date: Date, hour: Int) {
         stepDao.deleteByHour(date, hour)
     }
@@ -59,23 +48,23 @@ class StepRepository private constructor(context: Context) {
 
                 val hourlyMap = mutableMapOf<Int, Int>()
 
-                // Инициализируем все часы от 0 до 23
+                // Initialize all hours from 0 to 23
                 for (hour in 0..23) {
                     hourlyMap[hour] = 0
                 }
 
-                // Заполняем данными
+                // fill data
                 stepDataList.forEach { stepData ->
                     hourlyMap[stepData.hour] = stepData.steps
                     Log.d("REPO_DEBUG", "   Час ${stepData.hour}: ${stepData.steps} шагов")
                 }
 
-                // Преобразуем в список пар
+                // convert to the list of pairs
                 val result = hourlyMap.toList().sortedBy { it.first }
                 Log.d("REPO_DEBUG", "✅ Сформирован результат: ${result.size} часов")
                 result
             }
-            .distinctUntilChanged() // ⚠️ ВАЖНО: обновлять только при изменении данных
+            .distinctUntilChanged() // update only when data was changed
     }
     companion object {
         @Volatile

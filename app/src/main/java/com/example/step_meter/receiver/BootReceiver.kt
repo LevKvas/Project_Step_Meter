@@ -12,11 +12,11 @@ class BootReceiver : BroadcastReceiver() {
 
     override fun onReceive(context: Context, intent: Intent) {
         if (intent.action == Intent.ACTION_BOOT_COMPLETED) {
-            // Перезапускаем сервис
+            // Restart the service
             val serviceIntent = Intent(context, StepTrackingService::class.java)
             context.startService(serviceIntent)
 
-            // Перезапускаем планировщик уведомлений
+            // Restart the notification scheduler
             StepScheduler.scheduleHourlyNotifications(context)
         }
     }

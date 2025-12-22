@@ -12,6 +12,8 @@ import kotlinx.coroutines.launch
 import android.util.Log
 import java.util.*
 
+// Connects Repositories to the UI
+
 class StepViewModel : ViewModel() {
     private val _totalSteps = MutableStateFlow(0)
     val totalSteps: StateFlow<Int> = _totalSteps.asStateFlow()
@@ -46,7 +48,6 @@ class StepViewModel : ViewModel() {
                     _hourlySteps.value = stepsList
                     Log.d("StepViewModel", "📈 Загружено почасовых данных: ${stepsList.size} часов")
 
-                    // Логируем для отладки
                     stepsList.forEach { (hour, steps) ->
                         if (steps > 0) {
                             Log.d("StepViewModel", "   $hour:00 - $steps шагов")
@@ -56,14 +57,6 @@ class StepViewModel : ViewModel() {
             } catch (e: Exception) {
                 Log.e("StepViewModel", "❌ Ошибка загрузки почасовых данных: ${e.message}")
             }
-        }
-    }
-
-    // ★★ ДОБАВЬ ЭТОТ МЕТОД ТОЖЕ (для обновления из сервиса)
-    fun updateHourlySteps(stepsList: List<Pair<Int, Int>>) {
-        viewModelScope.launch {
-            _hourlySteps.value = stepsList
-            Log.d("StepViewModel", "🔄 Обновление почасовых данных: ${stepsList.size} часов")
         }
     }
 
