@@ -21,4 +21,14 @@ interface StepDao {
 
     @Query("DELETE FROM step_data WHERE date < :date")
     suspend fun deleteOldData(date: Date)
+
+    @Query("DELETE FROM step_data WHERE date = :date")
+    suspend fun deleteByDate(date: Date)
+
+    // StepDao.kt
+    @Query("DELETE FROM step_data WHERE date = :date AND hour = :hour")
+    suspend fun deleteByHour(date: Date, hour: Int)
+
+    @Query("DELETE FROM step_data")
+    suspend fun deleteAll()
 }

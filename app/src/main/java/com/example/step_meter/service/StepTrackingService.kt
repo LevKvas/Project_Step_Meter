@@ -1,5 +1,6 @@
 package com.example.step_meter.service
 
+import android.annotation.SuppressLint
 import com.example.step_meter.data.database.repository.StepRepository
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
@@ -62,6 +63,7 @@ class StepTrackingService : Service(), SensorEventListener {
         }
     }
 
+    @SuppressLint("UnspecifiedRegisterReceiverFlag")
     override fun onCreate() {
         super.onCreate()
         Log.d(TAG, "🔥 onCreate() вызван")
@@ -80,18 +82,12 @@ class StepTrackingService : Service(), SensorEventListener {
 
         // Регистрируем receiver для сброса
         val resetFilter = IntentFilter("RESET_STEPS_ACTION")
-        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
-            registerReceiver(resetReceiver, resetFilter, RECEIVER_EXPORTED)
-        } else {
-            registerReceiver(resetReceiver, resetFilter)
-        }
 
-        // Регистрируем receiver для запросов
-        val requestFilter = IntentFilter("REQUEST_STEPS_ACTION")
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
-            registerReceiver(requestReceiver, requestFilter, RECEIVER_EXPORTED)
+            registerReceiver(resetReceiver, resetFilter, RECEIVER_NOT_EXPORTED)
         } else {
-            registerReceiver(requestReceiver, requestFilter)
+            @Suppress("DEPRECATION")
+            registerReceiver(resetReceiver, resetFilter)
         }
 
         sendStepsToApp(appTotalSteps)
@@ -235,6 +231,21 @@ class StepTrackingService : Service(), SensorEventListener {
                 updateNotification()
             }
         }
+
+        CoroutineScope(Dispatchers.IO).launch {
+            val calendar = Calendar.getInstance()
+            val currentHour = calendar.get(Calendar.HOUR_OF_DAY)
+
+            Log.d(TAG, "🔴 ТЕСТ: Сохраняю $appTotalSteps шагов для часа $currentHour")
+
+            try {
+                // Используем ТЕКУЩЕЕ время (не обнуляем минуты)
+                repository.saveStep(calendar.time, currentHour, appTotalSteps)
+                Log.d(TAG, "✅ ТЕСТ: Успешно сохранено в БД")
+            } catch (e: Exception) {
+                Log.e(TAG, "❌ ТЕСТ: Ошибка сохранения: ${e.message}")
+            }
+        }
     }
 
     private fun checkDateChange() {
@@ -267,45 +278,39 @@ class StepTrackingService : Service(), SensorEventListener {
     private fun saveHourlyData() {
         try {
             checkDateChange()
-
             val calendar = Calendar.getInstance()
             val currentHour = calendar.get(Calendar.HOUR_OF_DAY)
 
-            Log.d(TAG, "🕐 Текущий час: $currentHour, сохраненный: $lastSavedHour")
+            // Вычисляем шаги за текущий час
+            val stepsThisHour = appTotalSteps - lastStepCountForHour
 
-            // Всегда вычисляем шаги за текущий час
-            val stepsForCurrentHour = appTotalSteps - lastStepCountForHour
-            Log.d(TAG, "📊 Шагов за текущий час $currentHour: $stepsForCurrentHour")
-
-            if (stepsForCurrentHour > 0 || currentHour != lastSavedHour) {
+            if (stepsThisHour > 0) {
                 CoroutineScope(Dispatchers.IO).launch {
                     try {
+                        // ⚠️ ВАЖНО: ОБНУЛЯЕМ ВРЕМЯ как в ViewModel!
                         val saveCalendar = Calendar.getInstance().apply {
-                            set(Calendar.HOUR_OF_DAY, currentHour)
-                            set(Calendar.MINUTE, 0)
-                            set(Calendar.SECOND, 0)
-                            set(Calendar.MILLISECOND, 0)
+                            timeInMillis = System.currentTimeMillis()
+                            set(Calendar.HOUR_OF_DAY, 0)     // ← ОБНУЛЯЕМ!
+                            set(Calendar.MINUTE, 0)          // ← ОБНУЛЯЕМ!
+                            set(Calendar.SECOND, 0)          // ← ОБНУЛЯЕМ!
+                            set(Calendar.MILLISECOND, 0)     // ← ОБНУЛЯЕМ!
                         }
 
-                        // ✅ ВАЖНО: сохраняем НАКОПЛЕННЫЕ шаги за час, а не разницу
-                        repository.saveStep(saveCalendar.time, currentHour, stepsForCurrentHour)
-                        Log.d(TAG, "💾 Сохранено: $currentHour:00 - $stepsForCurrentHour шагов")
+                        val todayDate = saveCalendar.time
+
+                        Log.d(TAG, "📅 Сохраняю для даты (с обнулением времени): $todayDate")
+                        Log.d(TAG, "🕐 Час: $currentHour, Шаги: $stepsThisHour")
+
+                        repository.saveStep(todayDate, currentHour, stepsThisHour)
 
                     } catch (e: Exception) {
-                        Log.e(TAG, "❌ Ошибка сохранения в БД: ${e.message}")
+                        Log.e(TAG, "❌ Ошибка сохранения: ${e.message}")
                     }
                 }
             }
 
-            // Обновляем savedHour только если час действительно сменился
-            if (currentHour != lastSavedHour) {
-                lastSavedHour = currentHour
-                lastStepCountForHour = appTotalSteps
-                Log.d(TAG, "🔄 Начинаем новый час $currentHour, базовое значение: $lastStepCountForHour")
-            }
-
         } catch (e: Exception) {
-            Log.e(TAG, "❌ Ошибка сохранения почасовых данных: ${e.message}")
+            Log.e(TAG, "❌ Ошибка saveHourlyData: ${e.message}")
         }
     }
 
@@ -333,6 +338,24 @@ class StepTrackingService : Service(), SensorEventListener {
 
         saveTotalSteps(0)
         saveLastStepValue(0f)
+
+        CoroutineScope(Dispatchers.IO).launch {
+            try {
+                val calendar = Calendar.getInstance().apply {
+                    set(Calendar.HOUR_OF_DAY, 0)  // Дата с обнуленным временем
+                    set(Calendar.MINUTE, 0)
+                }
+                val today = calendar.time
+                val currentHour = Calendar.getInstance().get(Calendar.HOUR_OF_DAY)
+
+                // Удаляем только запись за текущий час
+                repository.deleteStepForHour(today, currentHour)
+
+                Log.d(TAG, "🗑️ Удалены данные за час $currentHour")
+            } catch (e: Exception) {
+                Log.e(TAG, "❌ Ошибка очистки БД: ${e.message}")
+            }
+        }
 
         sendStepsToApp(0)
         updateNotification()

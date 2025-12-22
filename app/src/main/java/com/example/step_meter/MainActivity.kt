@@ -34,10 +34,10 @@ import androidx.compose.ui.unit.sp
 import androidx.compose.foundation.horizontalScroll
 import androidx.compose.foundation.rememberScrollState
 import java.util.*
-import androidx.compose.ui.draw.rotate
 import androidx.compose.foundation.background
+import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.ui.unit.times
-
+import androidx.compose.foundation.border
 
 class MainActivity : ComponentActivity() {
 
@@ -350,128 +350,87 @@ fun DashboardScreen(
 @Composable
 fun SimpleScrollableChart(hourlySteps: List<Pair<Int, Int>>) {
     val scrollState = rememberScrollState()
-    val maxSteps = (hourlySteps.maxOfOrNull { it.second } ?: 0).coerceAtLeast(1)
     val currentHour = Calendar.getInstance().get(Calendar.HOUR_OF_DAY)
 
-    // Вычисляем шаг для вертикальной оси
-    val yStep = when {
-        maxSteps <= 100 -> 20
-        maxSteps <= 500 -> 100
-        maxSteps <= 1000 -> 200
-        maxSteps <= 5000 -> 1000
-        else -> 2000
+    val recentHours = (0..6).map { i ->
+        val hour = (currentHour - 6 + i + 24) % 24
+        val steps = hourlySteps.find { it.first == hour }?.second ?: 0
+        Pair(hour, steps)
     }
-
-    // Генерируем значения для оси Y
-    val yValues = generateSequence(0) { it + yStep }
-        .takeWhile { it <= maxSteps + yStep }
-        .toList()
 
     Box(
         modifier = Modifier.fillMaxSize()
     ) {
-        Row(
-            modifier = Modifier.fillMaxSize(),
-            verticalAlignment = Alignment.Bottom
+        Text(
+            text = "Шаги",
+            fontSize = 12.sp,
+            color = MaterialTheme.colorScheme.onSurfaceVariant,
+            modifier = Modifier
+                .align(Alignment.TopStart)
+                .padding(start = 8.dp, top = 8.dp)
+        )
+
+        Box(
+            modifier = Modifier
+                .fillMaxSize()
+                .padding(top = 32.dp, bottom = 40.dp, start = 40.dp, end = 16.dp)
         ) {
-            // Вертикальная ось с подписями
-            Column(
+            Row(
                 modifier = Modifier
-                    .width(40.dp)
-                    .fillMaxHeight(),
-                verticalArrangement = Arrangement.SpaceBetween,
-                horizontalAlignment = Alignment.End
+                    .fillMaxSize()
+                    .horizontalScroll(scrollState),
+                horizontalArrangement = Arrangement.spacedBy(32.dp),
+                verticalAlignment = Alignment.Bottom
             ) {
-                yValues.reversed().forEach { value ->
-                    Text(
-                        text = if (value >= 1000) "${value / 1000}k" else value.toString(),
-                        fontSize = 10.sp,
-                        color = MaterialTheme.colorScheme.onSurfaceVariant
-                    )
-                }
-            }
+                recentHours.forEach { (hour, steps) ->
+                    val maxSteps = recentHours.maxOfOrNull { it.second } ?: 1
+                    val heightPercentage = steps.toFloat() / maxSteps
+                    val barHeight = heightPercentage * 180.dp
 
-            // График с прокруткой (БЕЗ SCROLLBAR)
-            Box(
-                modifier = Modifier
-                    .weight(1f)
-                    .fillMaxHeight()
-            ) {
-                // Горизонтальные линии сетки
-                Canvas(
-                    modifier = Modifier.fillMaxSize()
-                ) {
-                    val canvasHeight = size.height
-                    val stepHeight = canvasHeight / (yValues.size - 1)
-
-                    yValues.forEachIndexed { index, _ ->
-                        val y = index * stepHeight
-                        drawLine(
-                            color = Color.LightGray.copy(alpha = 0.3f),
-                            start = Offset(0f, y),
-                            end = Offset(size.width, y),
-                            strokeWidth = 1.dp.toPx()
-                        )
-                    }
-                }
-
-                // Столбцы графика с прокруткой
-                Row(
-                    modifier = Modifier
-                        .fillMaxSize()
-                        .horizontalScroll(scrollState)
-                        .padding(start = 8.dp, end = 8.dp),
-                    horizontalArrangement = Arrangement.spacedBy(8.dp), // Увеличил расстояние
-                    verticalAlignment = Alignment.Bottom
-                ) {
-                    hourlySteps.forEach { (hour, steps) ->
-                        // Высота столбца в процентах от максимального значения
-                        val heightPercentage = if (maxSteps > 0) {
-                            steps.toFloat() / maxSteps
-                        } else {
-                            0f
-                        }
-
-                        val barHeight = heightPercentage * 180.dp
-                        val isCurrentHour = hour == currentHour
-
-                        Column(
-                            horizontalAlignment = Alignment.CenterHorizontally,
-                            verticalArrangement = Arrangement.Bottom,
-                            modifier = Modifier.width(32.dp) // Увеличил ширину
-                        ) {
-                            // Количество шагов над столбцом
-                            if (steps > 0) {
-                                Text(
-                                    text = formatSteps(steps),
-                                    fontSize = 9.sp,
-                                    color = MaterialTheme.colorScheme.onSurface,
-                                    modifier = Modifier.padding(bottom = 4.dp),
-                                    maxLines = 1
-                                )
-                            }
-
-                            // Столбец
+                    Column(
+                        horizontalAlignment = Alignment.CenterHorizontally,
+                        verticalArrangement = Arrangement.Bottom,
+                        modifier = Modifier.width(48.dp)
+                    ) {
+                        // Точка
+                        if (steps > 0) {
                             Box(
                                 modifier = Modifier
-                                    .width(20.dp)
-                                    .height(barHeight)
+                                    .size(12.dp)
+                                    .offset(y = -barHeight)
                                     .background(
-                                        color = if (isCurrentHour) {
+                                        color = if (hour == currentHour)
                                             MaterialTheme.colorScheme.secondary
-                                        } else {
-                                            MaterialTheme.colorScheme.primary
-                                        },
-                                        shape = MaterialTheme.shapes.small
+                                        else
+                                            MaterialTheme.colorScheme.primary,
+                                        shape = CircleShape
                                     )
                             )
 
-                            // Подпись часа
+                            // Количество шагов
                             Text(
-                                text = if (hour % 2 == 0) hour.toString() else "", // Показываем каждый четный час
-                                fontSize = 10.sp,
+                                text = if (steps > 1000) "${steps / 1000}k" else steps.toString(),
+                                fontSize = 9.sp,
                                 color = MaterialTheme.colorScheme.onSurface,
-                                modifier = Modifier.padding(top = 4.dp)
+                                modifier = Modifier
+                                    .offset(y = -barHeight - 16.dp)
+                            )
+                        }
+
+                        // Время - с ФИКСИРОВАННОЙ высотой
+                        Box(
+                            modifier = Modifier
+                                .height(24.dp)
+                                .fillMaxWidth(),
+                            contentAlignment = Alignment.BottomCenter
+                        ) {
+                            Text(
+                                text = when {
+                                    hour < 10 -> "0${hour}:00"
+                                    else -> "${hour}:00"
+                                },
+                                fontSize = 10.sp,
+                                color = MaterialTheme.colorScheme.onSurface
                             )
                         }
                     }
@@ -479,40 +438,13 @@ fun SimpleScrollableChart(hourlySteps: List<Pair<Int, Int>>) {
             }
         }
 
-        // Подпись оси X
-        Box(
+        Text(
+            text = "Время (последние 7 часов)",
+            fontSize = 12.sp,
+            color = MaterialTheme.colorScheme.onSurfaceVariant,
             modifier = Modifier
                 .align(Alignment.BottomStart)
                 .padding(start = 48.dp, bottom = 8.dp)
-        ) {
-            Text(
-                text = "Часы",
-                fontSize = 12.sp,
-                color = MaterialTheme.colorScheme.onSurfaceVariant
-            )
-        }
-
-        // Подпись оси Y
-        Box(
-            modifier = Modifier
-                .align(Alignment.TopStart)
-                .padding(start = 4.dp, top = 8.dp)
-                .rotate(-90f)
-        ) {
-            Text(
-                text = "Шаги",
-                fontSize = 12.sp,
-                color = MaterialTheme.colorScheme.onSurfaceVariant
-            )
-        }
-    }
-}
-
-// Вспомогательная функция для форматирования шагов
-private fun formatSteps(steps: Int): String {
-    return when {
-        steps >= 1000000 -> "${steps / 1000000}M"
-        steps >= 1000 -> "${steps / 1000}k"
-        else -> steps.toString()
+        )
     }
 }
